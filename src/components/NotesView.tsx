@@ -21,7 +21,7 @@ export default function NotesView({
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedLeadId, setSelectedLeadId] = useState(leads[0]?.id || "");
   const [newNoteText, setNewNoteText] = useState("");
-  const [noteAuthor, setNoteAuthor] = useState(currentUser || "เซลส์วิภา");
+  const [noteAuthor, setNoteAuthor] = useState(currentUser || salespersons[0] || "Phere");
 
   React.useEffect(() => {
     if (currentUser) {
@@ -101,7 +101,7 @@ export default function NotesView({
                 onChange={(e) => setNoteAuthor(e.target.value)}
                 className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
-                {salespersons.map((sp) => (
+                {(salespersons.length > 0 ? salespersons : ["Phere", "Nalin", "Beer"]).map((sp) => (
                   <option key={sp} value={sp}>{sp}</option>
                 ))}
               </select>

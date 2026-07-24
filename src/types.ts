@@ -5,6 +5,7 @@
 export enum LeadStatus {
   NEW_LEAD = "new_lead",          // 🟡 Lead ใหม่
   CONTACTED = "contacted",        // 🟠 ติดต่อแล้ว
+  MEETING = "meeting",            // 📅 นัด Meeting
   SENT_DETAILS = "sent_details",  // 🔵 ส่งรายละเอียด
   WAITING_DOCS = "waiting_docs",  // 🟣 รอเอกสาร
   REGISTERED = "registered",      // 🟢 สมัครแล้ว
@@ -18,6 +19,7 @@ export enum LeadStatus {
 export const StatusLabels: Record<LeadStatus, string> = {
   [LeadStatus.NEW_LEAD]: "🟡 Lead ใหม่",
   [LeadStatus.CONTACTED]: "🟠 ติดต่อแล้ว",
+  [LeadStatus.MEETING]: "📅 นัด Meeting",
   [LeadStatus.SENT_DETAILS]: "🔵 ส่งรายละเอียด",
   [LeadStatus.WAITING_DOCS]: "🟣 รอเอกสาร",
   [LeadStatus.REGISTERED]: "🟢 สมัครแล้ว",
@@ -29,16 +31,17 @@ export const StatusLabels: Record<LeadStatus, string> = {
 };
 
 export const StatusColors: Record<LeadStatus, string> = {
-  [LeadStatus.NEW_LEAD]: "bg-amber-50 text-amber-700 border-amber-200",
-  [LeadStatus.CONTACTED]: "bg-orange-50 text-orange-700 border-orange-200",
-  [LeadStatus.SENT_DETAILS]: "bg-blue-50 text-blue-700 border-blue-200",
-  [LeadStatus.WAITING_DOCS]: "bg-purple-50 text-purple-700 border-purple-200",
-  [LeadStatus.REGISTERED]: "bg-green-50 text-green-700 border-green-200",
-  [LeadStatus.ACTIVATED]: "bg-emerald-50 text-emerald-700 border-emerald-200",
-  [LeadStatus.REGULAR]: "bg-yellow-50 text-yellow-700 border-yellow-200",
-  [LeadStatus.LOST]: "bg-rose-50 text-rose-700 border-rose-200",
-  [LeadStatus.NOT_INTERESTED]: "bg-gray-50 text-gray-700 border-gray-200",
-  [LeadStatus.NO_CONTACT]: "bg-slate-50 text-slate-700 border-slate-200",
+  [LeadStatus.NEW_LEAD]: "bg-amber-100 text-amber-800 border-amber-300 font-medium",
+  [LeadStatus.CONTACTED]: "bg-orange-100 text-orange-800 border-orange-300 font-medium",
+  [LeadStatus.MEETING]: "bg-indigo-100 text-indigo-800 border-indigo-300 font-medium",
+  [LeadStatus.SENT_DETAILS]: "bg-blue-100 text-blue-800 border-blue-300 font-medium",
+  [LeadStatus.WAITING_DOCS]: "bg-purple-100 text-purple-800 border-purple-300 font-medium",
+  [LeadStatus.REGISTERED]: "bg-green-100 text-green-800 border-green-300 font-medium",
+  [LeadStatus.ACTIVATED]: "bg-emerald-100 text-emerald-800 border-emerald-300 font-medium",
+  [LeadStatus.REGULAR]: "bg-yellow-100 text-yellow-800 border-yellow-300 font-medium",
+  [LeadStatus.LOST]: "bg-rose-100 text-rose-800 border-rose-300 font-medium",
+  [LeadStatus.NOT_INTERESTED]: "bg-gray-100 text-gray-700 border-gray-300 font-medium",
+  [LeadStatus.NO_CONTACT]: "bg-slate-100 text-slate-700 border-slate-300 font-medium",
 };
 
 export interface Note {

@@ -1,10 +1,21 @@
-import React from "react";
+import React, { useState } from "react";
 import { Lead, LeadStatus, StatusLabels } from "../types";
 import { 
   Users, UserCheck, FileText, PhoneCall, CheckCircle, TrendingUp, 
-  AlertTriangle, ArrowUpRight, Award, Flame, BarChart3, HelpCircle 
+  AlertTriangle, ArrowUpRight, Award, Flame, BarChart3, HelpCircle,
+  Filter, Layers
 } from "lucide-react";
 import { motion } from "motion/react";
+import { 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer, 
+  Cell 
+} from "recharts";
 
 interface DashboardViewProps {
   leads: Lead[];
@@ -49,6 +60,30 @@ export default function DashboardView({ leads, onNavigate, onSelectLead }: Dashb
   const conversionRate = totalLeadsCount > 0 
     ? Math.round((convertedLeadsCount / totalLeadsCount) * 100) 
     : 0;
+
+  // Pipeline Funnel State & Calculation
+  const [funnelSalesperson, setFunnelSalesperson] = useState<string>("all");
+
+  const salespersonsList = Array.from(
+    new Set(leads.map(l => l.salesPerson).filter(Boolean))
+  );
+
+  const funnelFilteredLeads = funnelSalesperson === "all"
+    ? leads
+    : leads.filter(l => l.salesPerson === funnelSalesperson);
+
+  const funnelTotalCount = funnelFilteredLeads.length;
+
+  const pipelineFunnelData = [
+    { name: "Lead ใหม่", fullName: "🟡 Lead ใหม่", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.NEW_LEAD).length, fill: "#fbbf24" },
+    { name: "ติดต่อแล้ว", fullName: "🟠 ติดต่อแล้ว", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.CONTACTED).length, fill: "#f97316" },
+    { name: "ส่งรายละเอียด", fullName: "🔵 ส่งรายละเอียด", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.SENT_DETAILS).length, fill: "#3b82f6" },
+    { name: "รอเอกสาร", fullName: "🟣 รอเอกสาร", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.WAITING_DOCS).length, fill: "#a855f7" },
+    { name: "สมัครแล้ว", fullName: "🟢 สมัครแล้ว", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.REGISTERED).length, fill: "#22c55e" },
+    { name: "เปิดใช้งานแล้ว", fullName: "✅ เปิดใช้งานแล้ว", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.ACTIVATED).length, fill: "#10b981" },
+    { name: "ใช้งานประจำ", fullName: "⭐ ใช้งานประจำ", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.REGULAR).length, fill: "#eab308" },
+    { name: "ไม่สนใจ/Lost", fullName: "❌ ไม่สนใจ/Lost", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.LOST || l.status === LeadStatus.NOT_INTERESTED || l.status === LeadStatus.NO_CONTACT).length, fill: "#f43f5e" }
+  ];
 
   // Channel breakdown
   const channelCounts: Record<string, number> = {};
@@ -165,6 +200,104 @@ export default function DashboardView({ leads, onNavigate, onSelectLead }: Dashb
             </div>
           </motion.div>
         ))}
+      </div>
+
+      {/* Pipeline Funnel Bar Chart Card */}
+      <div id="pipeline-funnel-chart-card" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-blue-50 text-blue-600 rounded-lg border border-blue-100">
+              <BarChart3 className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-slate-800 font-semibold text-base">สรุปจำนวน Lead ตามสถานะ (Pipeline Funnel)</h3>
+              <p className="text-xs text-slate-400">ภาพรวมความคืบหน้าของทีมในแต่ละขั้นตอนของ Sales Pipeline</p>
+            </div>
+          </div>
+
+          {/* Salesperson Filter */}
+          {salespersonsList.length > 0 && (
+            <div className="flex items-center gap-2 self-start sm:self-center">
+              <span className="text-xs text-slate-500 font-medium flex items-center gap-1">
+                <Filter className="w-3.5 h-3.5" /> กรองทีม:
+              </span>
+              <select
+                id="funnel-salesperson-select"
+                value={funnelSalesperson}
+                onChange={(e) => setFunnelSalesperson(e.target.value)}
+                className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-1.5 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              >
+                <option value="all">ทุกคนในทีม (ภาพรวมทั้งหมด)</option>
+                {salespersonsList.map(sp => (
+                  <option key={sp} value={sp}>{sp}</option>
+                ))}
+              </select>
+            </div>
+          )}
+        </div>
+
+        {/* Recharts Bar Chart */}
+        <div className="h-72 w-full pt-2">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={pipelineFunnelData} margin={{ top: 20, right: 20, left: -10, bottom: 25 }}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+              <XAxis 
+                dataKey="name" 
+                tick={{ fontSize: 11, fill: "#64748b" }} 
+                interval={0}
+                angle={-15}
+                textAnchor="end"
+                height={45}
+              />
+              <YAxis 
+                allowDecimals={false} 
+                tick={{ fontSize: 11, fill: "#64748b" }}
+              />
+              <Tooltip 
+                cursor={{ fill: "rgba(241, 245, 249, 0.6)" }}
+                content={({ active, payload }) => {
+                  if (active && payload && payload.length) {
+                    const data = payload[0].payload;
+                    const pct = funnelTotalCount > 0 ? Math.round((data.count / funnelTotalCount) * 100) : 0;
+                    return (
+                      <div className="bg-slate-900 text-white p-3 rounded-xl shadow-xl border border-slate-700 text-xs space-y-1">
+                        <p className="font-bold text-slate-100">{data.fullName}</p>
+                        <p className="text-slate-300">
+                          จำนวน: <span className="font-mono font-bold text-blue-400 text-sm">{data.count}</span> ราย
+                        </p>
+                        <p className="text-[10px] text-slate-400">
+                          สัดส่วน: {pct}% ของ Lead ทั้งหมด ({funnelTotalCount} ราย)
+                        </p>
+                      </div>
+                    );
+                  }
+                  return null;
+                }}
+              />
+              <Bar dataKey="count" radius={[6, 6, 0, 0]} barSize={36}>
+                {pipelineFunnelData.map((entry, index) => (
+                  <Cell key={`cell-${index}`} fill={entry.fill} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Stage Badges Bar */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 pt-2 border-t border-slate-100">
+          {pipelineFunnelData.map(item => (
+            <div 
+              key={item.name} 
+              className="bg-slate-50 p-2 rounded-lg border border-slate-100 text-center space-y-0.5"
+            >
+              <div className="flex items-center justify-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: item.fill }} />
+                <span className="text-[10px] text-slate-500 font-medium truncate">{item.name}</span>
+              </div>
+              <div className="text-sm font-bold font-mono text-slate-800">{item.count} <span className="text-[10px] font-normal text-slate-400">ราย</span></div>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Grid: Conversion Rate & Automatic Alert Center */}

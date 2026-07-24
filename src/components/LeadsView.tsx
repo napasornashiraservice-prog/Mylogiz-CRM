@@ -14,6 +14,7 @@ interface LeadsViewProps {
   onAddLead: (lead: Omit<Lead, "id" | "createdAt" | "updatedAt" | "timeline" | "calls" | "files">) => void;
   onUpdateLeadStatus: (id: string, newStatus: LeadStatus) => void;
   onSelectLead: (lead: Lead) => void;
+  onUpdateLead?: (updatedLead: Lead) => void;
 }
 
 const ALL_CHANNELS = ["Facebook", "TikTok", "Website", "Line OA", "โทรเข้า", "คนแนะนำ", "หาเอง"];
@@ -21,12 +22,14 @@ const ALL_TAGS = ["เปิดร้านรับส่งใหม่", "เ
 const ALL_PROVINCES = THAI_PROVINCES;
 
 
-export default function LeadsView({ leads, salespersons = [], currentUser, onAddLead, onUpdateLeadStatus, onSelectLead }: LeadsViewProps) {
+export default function LeadsView({ leads, salespersons = [], currentUser, onAddLead, onUpdateLeadStatus, onSelectLead, onUpdateLead }: LeadsViewProps) {
   // UI views: "kanban" or "list"
   const [viewType, setViewType] = useState<"kanban" | "list">("kanban");
   
   // Search and Filter States
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedStatus, setSelectedStatus] = useState<string>("all");
+  const [selectedSalesperson, setSelectedSalesperson] = useState<string>("all");
   const [selectedChannel, setSelectedChannel] = useState("all");
   const [selectedTag, setSelectedTag] = useState("all");
   const [selectedProvince, setSelectedProvince] = useState("all");
@@ -62,21 +65,44 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
 
   // Filtered Leads
   const filteredLeads = leads.filter(l => {
-    const matchesSearch = 
-      l.shopName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      l.contactName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      l.phone.includes(searchQuery) ||
-      l.lineId.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      l.province.includes(searchQuery) ||
-      (l.customerCode && l.customerCode.toLowerCase().includes(searchQuery.toLowerCase()));
+    const query = searchQuery.trim().toLowerCase();
+    const matchesSearch = !query || 
+      (l.shopName && l.shopName.toLowerCase().includes(query)) ||
+      (l.contactName && l.contactName.toLowerCase().includes(query)) ||
+      (l.phone && l.phone.includes(query)) ||
+      (l.lineId && l.lineId.toLowerCase().includes(query)) ||
+      (l.province && l.province.toLowerCase().includes(query)) ||
+      (l.customerCode && l.customerCode.toLowerCase().includes(query)) ||
+      (l.facebook && l.facebook.toLowerCase().includes(query));
 
+    const matchesStatus = selectedStatus === "all" || l.status === selectedStatus;
     const matchesChannel = selectedChannel === "all" || l.channel === selectedChannel;
     const matchesTag = selectedTag === "all" || l.tags.includes(selectedTag);
     const matchesProvince = selectedProvince === "all" || l.province === selectedProvince;
     const matchesScore = selectedScore === "all" || l.score === selectedScore;
+    const matchesSalesperson = selectedSalesperson === "all" || l.salesPerson === selectedSalesperson;
 
-    return matchesSearch && matchesChannel && matchesTag && matchesProvince && matchesScore;
+    return matchesSearch && matchesStatus && matchesChannel && matchesTag && matchesProvince && matchesScore && matchesSalesperson;
   });
+
+  const hasActiveFilters = 
+    searchQuery !== "" || 
+    selectedStatus !== "all" || 
+    selectedSalesperson !== "all" ||
+    selectedChannel !== "all" || 
+    selectedTag !== "all" || 
+    selectedProvince !== "all" || 
+    selectedScore !== "all";
+
+  const resetFilters = () => {
+    setSearchQuery("");
+    setSelectedStatus("all");
+    setSelectedSalesperson("all");
+    setSelectedChannel("all");
+    setSelectedTag("all");
+    setSelectedProvince("all");
+    setSelectedScore("all");
+  };
 
   const handleDownloadCSV = () => {
     // 1. Prepare headers
@@ -159,11 +185,11 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
   const PIPELINE_COLUMNS: { id: LeadStatus; label: string; color: string }[] = [
     { id: LeadStatus.NEW_LEAD, label: "🟡 Lead ใหม่", color: "border-amber-400 bg-amber-500/10" },
     { id: LeadStatus.CONTACTED, label: "🟠 ติดต่อแล้ว", color: "border-orange-400 bg-orange-500/10" },
+    { id: LeadStatus.MEETING, label: "📅 นัด Meeting", color: "border-indigo-400 bg-indigo-500/10" },
     { id: LeadStatus.SENT_DETAILS, label: "🔵 ส่งรายละเอียด", color: "border-blue-400 bg-blue-500/10" },
     { id: LeadStatus.WAITING_DOCS, label: "🟣 รอเอกสาร", color: "border-purple-400 bg-purple-500/10" },
     { id: LeadStatus.REGISTERED, label: "🟢 สมัครแล้ว", color: "border-green-400 bg-green-500/10" },
     { id: LeadStatus.ACTIVATED, label: "✅ เปิดใช้งานแล้ว", color: "border-emerald-400 bg-emerald-500/10" },
-    { id: LeadStatus.REGULAR, label: "⭐ ใช้งานประจำ", color: "border-yellow-400 bg-yellow-500/10" },
     { id: LeadStatus.LOST, label: "❌ Lost / ยกเลิก", color: "border-rose-400 bg-rose-500/10" },
     { id: LeadStatus.NOT_INTERESTED, label: "⚪ ยังไม่สนใจ", color: "border-gray-400 bg-gray-500/10" },
     { id: LeadStatus.NO_CONTACT, label: "🔇 ติดต่อไม่ได้", color: "border-slate-400 bg-slate-500/10" }
@@ -283,25 +309,80 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
 
       {/* Search and Filters Bar */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
-        <div className="flex flex-col md:flex-row gap-3">
+        <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center">
+          {/* Search Input */}
           <div className="relative flex-1">
             <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-3" />
             <input 
               id="lead-search-input"
               type="text" 
-              placeholder="ค้นหาด้วย ชื่อร้าน, เบอร์โทร, LINE ID, จังหวัด, รหัสลูกค้า..." 
+              placeholder="ค้นหาชื่อลูกค้า, ชื่อร้าน/บริษัท, ผู้ติดต่อ, เบอร์โทร, LINE ID, รหัสลูกค้า..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-700 placeholder-slate-400"
+              className="w-full pl-10 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-700 placeholder-slate-400"
             />
+            {searchQuery && (
+              <button 
+                onClick={() => setSearchQuery("")}
+                className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 cursor-pointer"
+                title="ล้างคำค้นหา"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            )}
           </div>
+
+          {/* Quick Dropdown: Lead Status Filter */}
+          <div className="w-full lg:w-52">
+            <select
+              id="filter-status-select"
+              value={selectedStatus}
+              onChange={(e) => setSelectedStatus(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+            >
+              <option value="all">ทุกสถานะ Lead</option>
+              {Object.entries(StatusLabels).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+          </div>
+
+          {/* Quick Dropdown: Salesperson Filter (if salespersons exist) */}
+          {salespersons.length > 0 && (
+            <div className="w-full lg:w-44">
+              <select
+                id="filter-salesperson-select"
+                value={selectedSalesperson}
+                onChange={(e) => setSelectedSalesperson(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              >
+                <option value="all">เซลส์ทั้งหมด</option>
+                {salespersons.map(sp => (
+                  <option key={sp} value={sp}>{sp}</option>
+                ))}
+              </select>
+            </div>
+          )}
+
+          {/* Toggle Advanced Filters */}
           <button 
             id="toggle-filters-btn"
             onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center justify-center gap-2 px-4 py-2 border rounded-lg text-xs font-semibold transition-all cursor-pointer ${showFilters ? "border-blue-200 bg-blue-50 text-blue-600" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-600"}`}
+            className={`flex items-center justify-center gap-2 px-3.5 py-2 border rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${showFilters ? "border-blue-200 bg-blue-50 text-blue-600" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-600"}`}
           >
-            <SlidersHorizontal className="w-4 h-4" /> ตัวกรองขั้นสูง {showFilters ? "(เปิด)" : ""}
+            <SlidersHorizontal className="w-4 h-4" /> ตัวกรองเพิ่มเติม {showFilters ? "(ซ่อน)" : ""}
           </button>
+
+          {/* Reset Filters Button */}
+          {hasActiveFilters && (
+            <button
+              id="reset-filters-btn"
+              onClick={resetFilters}
+              className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap"
+            >
+              <X className="w-3.5 h-3.5" /> ล้างตัวกรอง
+            </button>
+          )}
         </div>
 
         {/* Extended Filters */}
@@ -310,7 +391,7 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
             id="filters-panel"
             initial={{ opacity: 0, height: 0 }} 
             animate={{ opacity: 1, height: "auto" }} 
-            className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-gray-100 text-xs"
+            className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100 text-xs"
           >
             <div>
               <label className="block text-slate-500 font-semibold mb-1">ช่องทางที่เข้ามา</label>
@@ -318,10 +399,23 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
                 id="filter-channel-select"
                 value={selectedChannel} 
                 onChange={(e) => setSelectedChannel(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
                 <option value="all">ทั้งหมด ทุกช่องทาง</option>
                 {ALL_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-slate-500 font-semibold mb-1">จังหวัด</label>
+              <select 
+                id="filter-province-select"
+                value={selectedProvince} 
+                onChange={(e) => setSelectedProvince(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="all">ทั้งหมด ทุกจังหวัด</option>
+                {ALL_PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
 
@@ -331,7 +425,7 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
                 id="filter-score-select"
                 value={selectedScore.toString()} 
                 onChange={(e) => setSelectedScore(e.target.value === "all" ? "all" : Number(e.target.value))}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-slate-600 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
                 <option value="all">ทั้งหมด ทุกคะแนน</option>
                 <option value="5">⭐⭐⭐⭐⭐ พร้อมปิดดีล</option>
@@ -342,6 +436,15 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
               </select>
             </div>
           </motion.div>
+        )}
+
+        {/* Filter Summary Counter */}
+        {hasActiveFilters && (
+          <div className="flex items-center justify-between pt-1 text-[11px] text-slate-500 border-t border-slate-100">
+            <span>
+              ผลการค้นหา/กรองข้อมูล: พบล่าสุด <strong className="text-blue-600 font-bold">{filteredLeads.length}</strong> จากทั้งหมด {leads.length} รายการ
+            </span>
+          </div>
         )}
       </div>
 
@@ -383,12 +486,24 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
                       {/* Shop Name & Score */}
                       <div className="flex items-start justify-between gap-1">
                         <h4 className="text-xs font-bold text-gray-800 line-clamp-2 pr-1">{lead.shopName}</h4>
-                        <div className="flex shrink-0">
-                          {Array.from({ length: 5 }).map((_, i) => (
-                            <Star 
-                              key={i} 
-                              className={`w-2.5 h-2.5 ${i < lead.score ? "text-amber-400 fill-amber-400" : "text-gray-200"}`} 
-                            />
+                        <div className="flex shrink-0 items-center">
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <button
+                              key={star}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (onUpdateLead) {
+                                  onUpdateLead({ ...lead, score: star });
+                                }
+                              }}
+                              className="p-[1px] hover:scale-125 transition-transform cursor-pointer group"
+                              title={`ปรับเป็น ${star} ดาว`}
+                            >
+                              <Star 
+                                className={`w-3 h-3 ${star <= lead.score ? "text-amber-400 fill-amber-400" : "text-gray-200 group-hover:text-amber-300"}`} 
+                              />
+                            </button>
                           ))}
                         </div>
                       </div>
@@ -502,12 +617,24 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
                     </td>
                     <td className="p-4 text-gray-500">{lead.salesPerson}</td>
                     <td className="p-4 text-center">
-                      <div className="flex justify-center">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                          <Star 
-                            key={i} 
-                            className={`w-3 h-3 ${i < lead.score ? "text-amber-400 fill-amber-400" : "text-gray-200"}`} 
-                          />
+                      <div className="flex justify-center items-center gap-0.5">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              if (onUpdateLead) {
+                                onUpdateLead({ ...lead, score: star });
+                              }
+                            }}
+                            className="p-0.5 hover:scale-125 transition-transform cursor-pointer group"
+                            title={`ปรับเป็น ${star} ดาว`}
+                          >
+                            <Star 
+                              className={`w-3.5 h-3.5 ${star <= lead.score ? "text-amber-400 fill-amber-400" : "text-gray-200 group-hover:text-amber-300"}`} 
+                            />
+                          </button>
                         ))}
                       </div>
                     </td>

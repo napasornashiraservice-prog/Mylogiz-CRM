@@ -228,7 +228,7 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
                       { key: "taxDoc", idPrefix: "taxdoc" },
                       { key: "storefrontPhoto", idPrefix: "storefront" }
                     ].map(cell => {
-                      const isCorpOnly = ["bookBank", "companyReg", "taxDoc"].includes(cell.key);
+                      const isCorpOnly = ["companyReg", "taxDoc"].includes(cell.key);
                       const isRequired = !isCorpOnly || lead.customerType === "corporate";
 
                       if (!isRequired) {

@@ -3,18 +3,21 @@ import { Lead, LeadStatus, StatusLabels, StatusColors, Note, TimelineItem, Docum
 import { 
   X, Calendar, Clock, Star, Phone, MapPin, Tag, Briefcase, 
   Plus, Trash2, FileText, UploadCloud, MessageSquare, ClipboardCheck, 
-  Clock3, ShieldCheck, HelpCircle, Package, Send
+  Clock3, ShieldCheck, HelpCircle, Package, Send, Copy, Check,
+  Image as ImageIcon, Eye, Download, Loader2, Paperclip,
+  Sparkles, TrendingUp, CheckCircle2, AlertTriangle, Lightbulb, Zap
 } from "lucide-react";
 import { motion } from "motion/react";
 
 interface LeadDetailsModalProps {
   lead: Lead;
   salespersons?: string[];
+  currentUser?: string | null;
   onClose: () => void;
   onUpdateLead: (updatedLead: Lead) => void;
   onAddNote: (leadId: string, text: string, author: string) => void;
   onAddCall: (leadId: string, answered: boolean, interestLevel: number, notes: string, nextFollowUpInDays?: number, customFollowUpDate?: string) => void;
-  onAddFile: (leadId: string, name: string, size: string, type: "image" | "pdf" | "other") => void;
+  onAddFile: (leadId: string, name: string, size: string, type: "image" | "pdf" | "other", url?: string) => void;
 }
 
 const ALL_STATUSES = Object.values(LeadStatus);
@@ -22,9 +25,46 @@ const PROVINCES = THAI_PROVINCES;
 
 
 export default function LeadDetailsModal({ 
-  lead, salespersons = [], onClose, onUpdateLead, onAddNote, onAddCall, onAddFile 
+  lead, salespersons = ["Phere", "Nalin", "Beer"], currentUser = null, onClose, onUpdateLead, onAddNote, onAddCall, onAddFile 
 }: LeadDetailsModalProps) {
-  const [activeTab, setActiveTab] = useState<"timeline" | "calls" | "notes" | "files">("timeline");
+  const [activeTab, setActiveTab] = useState<"timeline" | "calls" | "notes" | "files" | "ai">("timeline");
+  
+  // AI Customer Analysis state
+  const [aiAnalysis, setAiAnalysis] = useState<{
+    winProbability: number;
+    dealUrgency: "high" | "medium" | "low";
+    summary: string;
+    customerPersona: string;
+    strengths: string[];
+    challenges: string[];
+    recommendedAction: string;
+    salesPitchScript: string;
+    suggestedOffers: string[];
+  } | null>(null);
+  const [isAnalyzingAI, setIsAnalyzingAI] = useState(false);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const [copiedScript, setCopiedScript] = useState(false);
+
+  const handleRunAIAnalysis = async () => {
+    setIsAnalyzingAI(true);
+    setAiError(null);
+    try {
+      const res = await fetch("/api/ai/analyze-lead", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ lead })
+      });
+      if (!res.ok) {
+        throw new Error("เกิดข้อผิดพลาดในการประมวลผลด้วย AI");
+      }
+      const data = await res.json();
+      setAiAnalysis(data);
+    } catch (err: any) {
+      setAiError(err.message || "ไม่สามารถวิเคราะห์ข้อมูลได้ในขณะนี้");
+    } finally {
+      setIsAnalyzingAI(false);
+    }
+  };
   
   // Edit state
   const [isEditing, setIsEditing] = useState(false);
@@ -49,7 +89,15 @@ export default function LeadDetailsModal({
 
   // Notes state
   const [noteText, setNoteText] = useState("");
-  const [noteAuthor, setNoteAuthor] = useState("เซลส์สมชาย");
+  const [noteAuthor, setNoteAuthor] = useState(() => currentUser || salespersons[0] || "Phere");
+
+  React.useEffect(() => {
+    if (currentUser) {
+      setNoteAuthor(currentUser);
+    } else if (salespersons.length > 0) {
+      setNoteAuthor(salespersons[0]);
+    }
+  }, [currentUser, salespersons]);
 
   // Calls logger state
   const [callAnswered, setCallAnswered] = useState(true);
@@ -58,14 +106,86 @@ export default function LeadDetailsModal({
   const [callFollowDays, setCallFollowDays] = useState("3");
   const [customCallDate, setCustomCallDate] = useState("");
 
-  // File upload simulation
+  // Real File upload state
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [filePreview, setFilePreview] = useState<string | null>(null);
   const [fileName, setFileName] = useState("");
   const [fileType, setFileType] = useState<"image" | "pdf" | "other">("image");
+  const [isUploading, setIsUploading] = useState(false);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
+
+  const handleFileSelect = (file: File) => {
+    setSelectedFile(file);
+    setFileName(file.name);
+
+    if (file.type.startsWith("image/")) {
+      setFileType("image");
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        setFilePreview(e.target?.result as string);
+      };
+      reader.readAsDataURL(file);
+    } else if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+      setFileType("pdf");
+      setFilePreview(null);
+    } else {
+      setFileType("other");
+      setFilePreview(null);
+    }
+  };
+
+  const handleFileInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      handleFileSelect(e.target.files[0]);
+    }
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      handleFileSelect(e.dataTransfer.files[0]);
+    }
+  };
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  };
 
   // Follow-up setting state
   const [followUpDate, setFollowUpDate] = useState(lead.followUp?.date || "");
   const [followUpTime, setFollowUpTime] = useState(lead.followUp?.time || "10:00");
   const [followUpCompleted, setFollowUpCompleted] = useState(lead.followUp?.isCompleted || false);
+
+  // Copy to clipboard state & helper
+  const [copiedField, setCopiedField] = useState<string | null>(null);
+
+  const handleCopyText = (text: string, fieldName: string) => {
+    if (!text) return;
+    navigator.clipboard.writeText(text);
+    setCopiedField(fieldName);
+    setTimeout(() => {
+      setCopiedField(null);
+    }, 2000);
+  };
+
+  const getFullContactSummary = () => {
+    const lines = [
+      `ชื่อร้านค้า/แบรนด์: ${lead.shopName || "-"}`,
+      `ชื่อผู้ติดต่อ: ${lead.contactName || "-"}`,
+      `เบอร์โทรศัพท์: ${lead.phone || "-"}`,
+      `LINE ID: ${lead.lineId ? `@${lead.lineId}` : "-"}`,
+      `Facebook Page: ${lead.facebook || "-"}`,
+      `จังหวัด: ${lead.province || "-"}`,
+      `ที่อยู่: ${lead.address || "-"}`,
+      lead.customerCode ? `รหัสลูกค้า: ${lead.customerCode}` : null,
+      `ยอดส่งเฉลี่ย: ${lead.shipmentsPerDay || 0} ชิ้น/เดือน`,
+      `เซลส์ผู้ดูแล: ${lead.salesPerson || "-"}`
+    ].filter(Boolean);
+    return lines.join("\n");
+  };
 
   // Documents Checklist computations
   const docs = lead.documents || { idCard: false, bookBank: false, companyReg: false, taxDoc: false, storefrontPhoto: false };
@@ -170,12 +290,48 @@ export default function LeadDetailsModal({
     setActiveTab("timeline");
   };
 
-  const submitFile = (e: React.FormEvent) => {
+  const submitFile = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fileName.trim()) return;
-    const fakeSize = `${Math.floor(100 + Math.random() * 900)} KB`;
-    onAddFile(lead.id, fileName, fakeSize, fileType);
-    setFileName("");
+    if (!selectedFile && !fileName.trim()) return;
+
+    setIsUploading(true);
+
+    try {
+      let fileDataUrl = "#";
+      let formattedSize = "120 KB";
+
+      if (selectedFile) {
+        formattedSize = formatFileSize(selectedFile.size);
+        fileDataUrl = await new Promise<string>((resolve) => {
+          const reader = new FileReader();
+          reader.onload = (ev) => resolve(ev.target?.result as string || "#");
+          reader.onerror = () => resolve("#");
+          reader.readAsDataURL(selectedFile);
+        });
+      }
+
+      const nameToSave = fileName.trim() || (selectedFile ? selectedFile.name : "ไฟล์เอกสารแนบ");
+      onAddFile(lead.id, nameToSave, formattedSize, fileType, fileDataUrl);
+
+      setSelectedFile(null);
+      setFilePreview(null);
+      setFileName("");
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+    } catch (err) {
+      console.error("Error uploading file:", err);
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
+  const handleDeleteFile = (fileId: string) => {
+    const updatedFiles = (lead.files || []).filter(f => f.id !== fileId);
+    onUpdateLead({
+      ...lead,
+      files: updatedFiles
+    });
   };
 
   const toggleTransport = (t: string) => {
@@ -206,6 +362,20 @@ export default function LeadDetailsModal({
               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${StatusColors[lead.status]}`}>
                 {StatusLabels[lead.status]}
               </span>
+              <button
+                id="header-quick-ai-analyze-btn"
+                onClick={() => {
+                  setActiveTab("ai");
+                  if (!aiAnalysis && !isAnalyzingAI) {
+                    handleRunAIAnalysis();
+                  }
+                }}
+                className="px-2.5 py-1 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1 shadow-2xs cursor-pointer ml-1"
+                title="คลิกเพื่อให้อัลกอริทึม Gemini AI วิเคราะห์โอกาสปิดการขาย"
+              >
+                <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
+                <span>✨ AI วิเคราะห์</span>
+              </button>
             </div>
             <p className="text-xs text-slate-400">เซลส์ดูแล: <span className="font-semibold text-slate-700">{lead.salesPerson}</span> | ช่องทางเข้ามา: <span className="font-semibold text-slate-700">{lead.channel}</span> | ยอดส่ง: <span className="font-semibold text-blue-600">{lead.shipmentsPerDay} ชิ้น/เดือน</span></p>
           </div>
@@ -287,13 +457,40 @@ export default function LeadDetailsModal({
                 <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
                   <Briefcase className="w-4 h-4 text-blue-500" /> รายละเอียดข้อมูลร้านค้า
                 </h3>
-                <button
-                  id="toggle-edit-details-btn"
-                  onClick={() => setIsEditing(!isEditing)}
-                  className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
-                >
-                  {isEditing ? "ยกเลิกแก้ไข" : "📝 แก้ไขข้อมูล"}
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    id="copy-lead-full-info-btn"
+                    type="button"
+                    onClick={() => handleCopyText(getFullContactSummary(), "full")}
+                    className={`text-xs font-bold px-2.5 py-1 rounded-md border flex items-center gap-1.5 transition-all cursor-pointer ${
+                      copiedField === "full" 
+                        ? "bg-emerald-50 border-emerald-300 text-emerald-700 shadow-xs" 
+                        : "bg-slate-50 border-slate-200 text-slate-700 hover:bg-slate-100"
+                    }`}
+                    title="คัดลอกสรุปข้อมูลติดต่อทั้งหมดลง Clipboard"
+                  >
+                    {copiedField === "full" ? (
+                      <>
+                        <Check className="w-3.5 h-3.5 text-emerald-600" />
+                        <span>คัดลอกเรียบร้อย!</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5 text-slate-500" />
+                        <span>คัดลอกข้อมูล</span>
+                      </>
+                    )}
+                  </button>
+
+                  <button
+                    id="toggle-edit-details-btn"
+                    type="button"
+                    onClick={() => setIsEditing(!isEditing)}
+                    className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer px-1 py-1"
+                  >
+                    {isEditing ? "ยกเลิกแก้ไข" : "📝 แก้ไขข้อมูล"}
+                  </button>
+                </div>
               </div>
 
               {isEditing ? (
@@ -406,6 +603,24 @@ export default function LeadDetailsModal({
                         <option value="corporate">🏢 นิติบุคคล</option>
                       </select>
                     </div>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="text-gray-500 font-semibold block mb-0.5">ระดับความสนใจ (Lead Score)</label>
+                      <div className="flex items-center gap-1.5 p-1.5 bg-slate-50 border border-slate-200 rounded-lg">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            id={`edit-lead-score-star-${star}`}
+                            type="button"
+                            onClick={() => setEditScore(star)}
+                            className="p-1 hover:scale-110 transition-transform cursor-pointer"
+                            title={`ปรับเป็น ${star} ดาว`}
+                          >
+                            <Star className={`w-5 h-5 ${star <= editScore ? "text-amber-400 fill-amber-400" : "text-slate-300"}`} />
+                          </button>
+                        ))}
+                        <span className="text-xs font-bold text-slate-700 ml-1 font-mono">{editScore}/5</span>
+                      </div>
+                    </div>
                   </div>
 
                   <div>
@@ -470,15 +685,54 @@ export default function LeadDetailsModal({
                     </div>
                     <div>
                       <span className="text-gray-400 block text-[10px]">เบอร์โทรศัพท์</span>
-                      <span className="font-semibold font-mono">{lead.phone || "-"}</span>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="font-semibold font-mono">{lead.phone || "-"}</span>
+                        {lead.phone && (
+                          <button
+                            id="copy-lead-phone-btn"
+                            type="button"
+                            onClick={() => handleCopyText(lead.phone, "phone")}
+                            className="p-1 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded transition-colors cursor-pointer"
+                            title="คัดลอกเบอร์โทรศัพท์"
+                          >
+                            {copiedField === "phone" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div>
                       <span className="text-gray-400 block text-[10px]">LINE ID</span>
-                      <span className="font-semibold text-indigo-600">{lead.lineId ? `@${lead.lineId}` : "-"}</span>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="font-semibold text-indigo-600">{lead.lineId ? `@${lead.lineId}` : "-"}</span>
+                        {lead.lineId && (
+                          <button
+                            id="copy-lead-line-btn"
+                            type="button"
+                            onClick={() => handleCopyText(lead.lineId, "line")}
+                            className="p-1 text-slate-400 hover:text-indigo-600 hover:bg-slate-100 rounded transition-colors cursor-pointer"
+                            title="คัดลอก LINE ID"
+                          >
+                            {copiedField === "line" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div>
                       <span className="text-gray-400 block text-[10px]">Facebook Page</span>
-                      <span className="font-semibold truncate block">{lead.facebook || "-"}</span>
+                      <div className="flex items-center gap-1.5 mt-0.5">
+                        <span className="font-semibold truncate block">{lead.facebook || "-"}</span>
+                        {lead.facebook && (
+                          <button
+                            id="copy-lead-fb-btn"
+                            type="button"
+                            onClick={() => handleCopyText(lead.facebook, "facebook")}
+                            className="p-1 text-slate-400 hover:text-blue-600 hover:bg-slate-100 rounded transition-colors cursor-pointer shrink-0"
+                            title="คัดลอก Facebook Page"
+                          >
+                            {copiedField === "facebook" ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <div>
                       <span className="text-gray-400 block text-[10px]">จังหวัดที่จัดส่ง</span>
@@ -502,10 +756,23 @@ export default function LeadDetailsModal({
                     </div>
                     <div>
                       <span className="text-gray-400 block text-[10px]">ระดับความสนใจ (Lead Score)</span>
-                      <div className="flex text-amber-400 mt-1">
-                        {Array.from({ length: 5 }).map((_, i) => (
-                          <Star key={i} className={`w-3.5 h-3.5 ${i < lead.score ? "fill-amber-400" : "text-gray-200"}`} />
+                      <div className="flex items-center gap-0.5 mt-1">
+                        {[1, 2, 3, 4, 5].map((star) => (
+                          <button
+                            key={star}
+                            type="button"
+                            id={`quick-score-star-${star}`}
+                            onClick={() => {
+                              setEditScore(star);
+                              onUpdateLead({ ...lead, score: star });
+                            }}
+                            className="p-0.5 hover:scale-110 transition-transform cursor-pointer group"
+                            title={`คลิกปรับเป็น ${star} ดาว`}
+                          >
+                            <Star className={`w-4 h-4 ${star <= lead.score ? "text-amber-400 fill-amber-400" : "text-gray-200 group-hover:text-amber-300"}`} />
+                          </button>
                         ))}
+                        <span className="text-[11px] font-bold text-amber-600 font-mono ml-1">{lead.score}/5</span>
                       </div>
                     </div>
                     <div>
@@ -517,7 +784,29 @@ export default function LeadDetailsModal({
                   </div>
 
                   <div>
-                    <span className="text-gray-400 block text-[10px]">ที่อยู่รับของเข้าระบบ</span>
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400 block text-[10px]">ที่อยู่รับของเข้าระบบ</span>
+                      {lead.address && (
+                        <button
+                          id="copy-lead-address-btn"
+                          type="button"
+                          onClick={() => handleCopyText(lead.address, "address")}
+                          className="text-[10px] font-semibold text-blue-600 hover:text-blue-800 flex items-center gap-1 cursor-pointer"
+                        >
+                          {copiedField === "address" ? (
+                            <>
+                              <Check className="w-3 h-3 text-emerald-600" />
+                              <span className="text-emerald-600">คัดลอกที่อยู่แล้ว!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="w-3 h-3" />
+                              <span>คัดลอกที่อยู่</span>
+                            </>
+                          )}
+                        </button>
+                      )}
+                    </div>
                     <p className="font-medium bg-slate-50 p-2.5 rounded-lg border border-gray-100 mt-1 leading-relaxed">{lead.address || "ยังไม่ได้บันทึกที่อยู่"}</p>
                   </div>
 
@@ -526,7 +815,20 @@ export default function LeadDetailsModal({
                     <div className="bg-indigo-50/50 p-3 rounded-lg border border-indigo-100 grid grid-cols-3 gap-2">
                       <div>
                         <span className="text-indigo-950 block text-[9px] font-bold uppercase">รหัสลูกค้าสมัครแล้ว</span>
-                        <span className="text-xs font-bold text-indigo-800 font-mono">{lead.customerCode || "ไม่มี"}</span>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className="text-xs font-bold text-indigo-800 font-mono">{lead.customerCode || "ไม่มี"}</span>
+                          {lead.customerCode && (
+                            <button
+                              id="copy-lead-code-btn"
+                              type="button"
+                              onClick={() => handleCopyText(lead.customerCode!, "code")}
+                              className="p-0.5 text-indigo-400 hover:text-indigo-700 rounded transition-colors cursor-pointer"
+                              title="คัดลอกรหัสลูกค้า"
+                            >
+                              {copiedField === "code" ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                            </button>
+                          )}
+                        </div>
                       </div>
                       <div>
                         <span className="text-indigo-950 block text-[9px] font-bold uppercase">เรทราคาเสนอขาย</span>
@@ -551,7 +853,7 @@ export default function LeadDetailsModal({
               <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
                 {[
                   { key: "idCard", label: "บัตรประชาชน", desc: "สําเนาบัตรเจ้าของร้าน" },
-                  { key: "bookBank", label: "Book Bank (ไม่บังคับ)", desc: "สําหรับรับเงิน COD" },
+                  { key: "bookBank", label: "Book Bank (ไม่บังคับ)", desc: "เลือกติ๊ก/ไม่ติ๊กก็ได้" },
                   { key: "companyReg", label: "หนังสือรับรอง", desc: "นิติบุคคล (ถ้ามี)" },
                   { key: "taxDoc", label: "ใบภาษี (ภพ.20)", desc: "ภาษีมูลค่าเพิ่ม (ถ้ามี)" },
                   { key: "storefrontPhoto", label: "รูปถ่ายหน้าร้าน", desc: "รูปถ่ายหน้าร้านค้า/ป้ายร้าน" }
@@ -647,20 +949,26 @@ export default function LeadDetailsModal({
           <div className="lg:col-span-5 flex flex-col bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden min-h-[380px]">
             
             {/* Tabs Selector Navigation */}
-            <div className="flex bg-slate-100 border-b border-slate-200 p-1 shrink-0">
+            <div className="flex bg-slate-100 border-b border-slate-200 p-1 shrink-0 overflow-x-auto">
               {[
                 { id: "timeline", label: "ประวัติการขาย", icon: Clock3 },
                 { id: "calls", label: "บันทึกการโทร", icon: Phone },
                 { id: "notes", label: "โน้ตย่อย", icon: MessageSquare },
-                { id: "files", label: "เอกสารแนบ", icon: FileText }
+                { id: "files", label: "เอกสารแนบ", icon: FileText },
+                { id: "ai", label: "✨ AI วิเคราะห์", icon: Sparkles }
               ].map(tab => (
                 <button
                   key={tab.id}
                   id={`details-tab-btn-${tab.id}`}
-                  onClick={() => setActiveTab(tab.id as any)}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${activeTab === tab.id ? "bg-white text-blue-600 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
+                  onClick={() => {
+                    setActiveTab(tab.id as any);
+                    if (tab.id === "ai" && !aiAnalysis && !isAnalyzingAI) {
+                      handleRunAIAnalysis();
+                    }
+                  }}
+                  className={`flex-1 flex items-center justify-center gap-1 py-2 px-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === tab.id ? "bg-white text-blue-600 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
                 >
-                  <tab.icon className="w-3.5 h-3.5" />
+                  <tab.icon className={`w-3.5 h-3.5 ${tab.id === "ai" ? "text-amber-500 animate-pulse" : ""}`} />
                   <span className="hidden sm:inline">{tab.label}</span>
                 </button>
               ))}
@@ -841,11 +1149,11 @@ export default function LeadDetailsModal({
                           id="note-author-select"
                           value={noteAuthor} 
                           onChange={(e) => setNoteAuthor(e.target.value)}
-                          className="bg-gray-50 border rounded px-1.5 py-0.5 text-[10px] text-gray-600"
+                          className="bg-gray-50 border rounded px-1.5 py-0.5 text-[10px] text-gray-600 font-medium"
                         >
-                          <option value="เซลส์สมชาย">สมชาย</option>
-                          <option value="เซลส์วิภา">วิภา</option>
-                          <option value="เซลส์ณพล">ณพล</option>
+                          {(salespersons.length > 0 ? salespersons : ["Phere", "Nalin", "Beer"]).map((sp) => (
+                            <option key={sp} value={sp}>{sp}</option>
+                          ))}
                         </select>
                       </div>
                       
@@ -889,75 +1197,409 @@ export default function LeadDetailsModal({
                 </div>
               )}
 
-              {/* TAB 4: CRM Files storage simulator */}
+              {/* TAB 4: CRM Files storage */}
               {activeTab === "files" && (
                 <div id="tab-content-files" className="space-y-4">
-                  <div className="bg-white p-3.5 rounded-xl border border-gray-200">
-                    <span className="font-bold text-gray-800 block mb-2">📁 แนบไฟล์ประกอบการยื่นเอกสาร</span>
-                    
-                    <form onSubmit={submitFile} className="space-y-2.5">
-                      <div>
-                        <label className="text-gray-400 text-[10px] block mb-0.5">ชื่อเอกสารหรือไฟล์ภาพ</label>
-                        <input
-                          id="new-file-name-input"
-                          type="text"
-                          required
-                          placeholder="เช่น สำเนาบัญชีธนาคารกสิกร_แบรนด์บิวตี้.jpg"
-                          value={fileName}
-                          onChange={(e) => setFileName(e.target.value)}
-                          className="w-full bg-slate-50 border p-2 rounded focus:outline-none"
-                        />
+                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-2xs space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                        <Paperclip className="w-4 h-4 text-blue-600" /> แนบไฟล์และรูปภาพเอกสาร
+                      </span>
+                      <span className="text-[10px] text-slate-400">รองรับรูปภาพ, PDF, Excel, Word</span>
+                    </div>
+
+                    <form onSubmit={submitFile} className="space-y-3">
+                      {/* Hidden File Input */}
+                      <input
+                        ref={fileInputRef}
+                        type="file"
+                        onChange={handleFileInputChange}
+                        accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.zip"
+                        className="hidden"
+                      />
+
+                      {/* Dropzone / File Picker */}
+                      <div
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={handleDrop}
+                        onClick={() => !selectedFile && fileInputRef.current?.click()}
+                        className={`border-2 border-dashed rounded-xl p-4 text-center transition-all ${
+                          selectedFile 
+                            ? "border-blue-300 bg-blue-50/40" 
+                            : "border-slate-300 hover:border-blue-400 hover:bg-slate-50 cursor-pointer"
+                        }`}
+                      >
+                        {selectedFile ? (
+                          <div className="flex items-center justify-between gap-3 text-left">
+                            <div className="flex items-center gap-3 overflow-hidden">
+                              {filePreview ? (
+                                <img 
+                                  src={filePreview} 
+                                  alt="Preview" 
+                                  className="w-12 h-12 object-cover rounded-lg border border-slate-200 shrink-0 shadow-2xs" 
+                                />
+                              ) : (
+                                <div className="w-12 h-12 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 shrink-0">
+                                  <FileText className="w-6 h-6" />
+                                </div>
+                              )}
+                              <div className="truncate">
+                                <span className="font-bold text-slate-800 text-xs block truncate">{selectedFile.name}</span>
+                                <span className="text-[10px] text-slate-500 font-mono">ขนาดไฟล์: {formatFileSize(selectedFile.size)}</span>
+                              </div>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedFile(null);
+                                setFilePreview(null);
+                                setFileName("");
+                                if (fileInputRef.current) fileInputRef.current.value = "";
+                              }}
+                              className="text-xs text-rose-600 hover:text-rose-800 font-bold underline px-2 py-1 shrink-0 cursor-pointer"
+                            >
+                              ยกเลิกไฟล์นี้
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="space-y-1.5">
+                            <UploadCloud className="w-8 h-8 text-blue-500 mx-auto" />
+                            <p className="text-xs font-semibold text-slate-700">
+                              ลากไฟล์มาวางที่นี่ หรือ <span className="text-blue-600 underline">คลิกเพื่อเลือกไฟล์จากเครื่อง</span>
+                            </p>
+                            <p className="text-[10px] text-slate-400">รูปภาพบัตรประชาชน, สำเนา Book Bank, สลิปโอนเงิน ฯลฯ</p>
+                          </div>
+                        )}
                       </div>
-                      
-                      <div className="grid grid-cols-2 gap-2">
+
+                      {/* File Details Inputs */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                         <div>
-                          <label className="text-gray-400 text-[10px] block mb-0.5">ประเภทของไฟล์</label>
+                          <label className="text-slate-500 text-[10px] font-bold block mb-1">ชื่อเรียกเอกสาร</label>
+                          <input
+                            id="new-file-name-input"
+                            type="text"
+                            placeholder="เช่น บัตรประชาชน_สมชาย.jpg"
+                            value={fileName}
+                            onChange={(e) => setFileName(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-slate-500 text-[10px] font-bold block mb-1">หมวดหมู่ไฟล์</label>
                           <select
                             id="new-file-type-select"
                             value={fileType}
                             onChange={(e) => setFileType(e.target.value as any)}
-                            className="w-full bg-slate-50 border p-2 rounded focus:outline-none"
+                            className="w-full bg-slate-50 border border-slate-200 p-2 rounded-lg text-xs font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
                           >
-                            <option value="image">รูปภาพ (.jpg, .png)</option>
-                            <option value="pdf">เอกสาร PDF (.pdf)</option>
-                            <option value="other">อื่น ๆ (.xlsx, .zip)</option>
+                            <option value="image">📷 รูปภาพเอกสาร (.jpg, .png)</option>
+                            <option value="pdf">📄 เอกสาร PDF (.pdf)</option>
+                            <option value="other">📦 ไฟล์อื่นๆ (.xlsx, .zip)</option>
                           </select>
                         </div>
-                        <div className="flex items-end">
-                          <button
-                            id="submit-file-upload-btn"
-                            type="submit"
-                            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold p-2 rounded transition-all cursor-pointer flex items-center justify-center gap-1"
-                          >
-                            <UploadCloud className="w-3.5 h-3.5" /> จำลองอัปโหลด
-                          </button>
-                        </div>
                       </div>
+
+                      <button
+                        id="submit-file-upload-btn"
+                        type="submit"
+                        disabled={isUploading || (!selectedFile && !fileName.trim())}
+                        className="w-full bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 text-white font-bold py-2.5 px-4 rounded-lg transition-all cursor-pointer flex items-center justify-center gap-2 text-xs shadow-xs"
+                      >
+                        {isUploading ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span>กำลังอัปโหลดไฟล์...</span>
+                          </>
+                        ) : (
+                          <>
+                            <UploadCloud className="w-4 h-4" />
+                            <span>อัปโหลดและบันทึกไฟล์</span>
+                          </>
+                        )}
+                      </button>
                     </form>
                   </div>
 
-                  {/* List of files */}
+                  {/* List of uploaded files */}
                   <div className="space-y-2">
-                    <span className="font-bold text-gray-700 block text-[10px] uppercase">รายการไฟล์แนบทั้งหมด</span>
-                    {(lead.files || []).slice().reverse().map(f => (
-                      <div key={f.id} className="bg-white p-2.5 rounded-lg border border-gray-100 flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <FileText className="w-4 h-4 text-indigo-500" />
-                          <div>
-                            <span className="font-bold block text-gray-800 text-[11px] truncate max-w-[180px]">{f.name}</span>
-                            <span className="text-[9px] text-gray-400 font-mono">{f.size} | {new Date(f.uploadedAt).toLocaleDateString("th-TH")}</span>
+                    <span className="font-bold text-slate-700 block text-[11px] uppercase tracking-wider">
+                      รายการไฟล์แนบทั้งหมด ({(lead.files || []).length} ไฟล์)
+                    </span>
+                    
+                    <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                      {(lead.files || []).slice().reverse().map(f => {
+                        const isImage = f.type === "image" || (f.url && f.url.startsWith("data:image/"));
+                        return (
+                          <div key={f.id} className="bg-white p-3 rounded-xl border border-slate-200 flex items-center justify-between gap-3 shadow-2xs hover:border-blue-200 transition-all">
+                            <div className="flex items-center gap-3 overflow-hidden">
+                              {isImage && f.url && f.url !== "#" ? (
+                                <img 
+                                  src={f.url} 
+                                  alt={f.name} 
+                                  onClick={() => setLightboxUrl(f.url)}
+                                  className="w-10 h-10 object-cover rounded-lg border border-slate-200 shrink-0 cursor-pointer hover:opacity-80 transition-opacity" 
+                                />
+                              ) : (
+                                <div className="w-10 h-10 bg-slate-100 text-slate-600 rounded-lg flex items-center justify-center shrink-0">
+                                  {f.type === "pdf" ? <FileText className="w-5 h-5 text-rose-500" /> : <Paperclip className="w-5 h-5 text-blue-500" />}
+                                </div>
+                              )}
+                              <div className="truncate">
+                                <span className="font-bold block text-slate-800 text-xs truncate">{f.name}</span>
+                                <span className="text-[10px] text-slate-400 font-mono">
+                                  {f.size} | {new Date(f.uploadedAt).toLocaleDateString("th-TH")} {new Date(f.uploadedAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}
+                                </span>
+                              </div>
+                            </div>
+
+                            <div className="flex items-center gap-2 shrink-0">
+                              {isImage && f.url && f.url !== "#" && (
+                                <button
+                                  type="button"
+                                  onClick={() => setLightboxUrl(f.url)}
+                                  className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-md transition-colors flex items-center gap-1 text-[11px] font-semibold cursor-pointer"
+                                  title="ดูรูปภาพขนาดใหญ่"
+                                >
+                                  <Eye className="w-3.5 h-3.5" />
+                                  <span className="hidden sm:inline">ดูรูป</span>
+                                </button>
+                              )}
+
+                              {f.url && f.url !== "#" && (
+                                <a
+                                  href={f.url}
+                                  download={f.name}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="p-1.5 text-emerald-600 hover:bg-emerald-50 rounded-md transition-colors flex items-center gap-1 text-[11px] font-semibold cursor-pointer"
+                                  title="ดาวน์โหลดไฟล์ลงเครื่อง"
+                                >
+                                  <Download className="w-3.5 h-3.5" />
+                                  <span className="hidden sm:inline">ดาวน์โหลด</span>
+                                </a>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteFile(f.id)}
+                                className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-md transition-colors cursor-pointer"
+                                title="ลบไฟล์นี้"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+
+                      {(lead.files || []).length === 0 && (
+                        <div className="py-10 text-center text-slate-400 text-xs flex flex-col items-center justify-center gap-1.5 bg-slate-50/50 rounded-xl border border-dashed border-slate-200">
+                          <UploadCloud className="w-8 h-8 text-slate-300" />
+                          <span className="font-medium text-slate-600">ยังไม่มีไฟล์เอกสารแนบ</span>
+                          <span className="text-[10px] text-slate-400">อัปโหลดรูปภาพ บัตรประชาชน หรือไฟล์สำคัญเพื่อแนบไว้กับ Lead นี้</span>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 5: AI Sales Intelligence */}
+              {activeTab === "ai" && (
+                <div id="tab-content-ai" className="space-y-3">
+                  <div className="bg-gradient-to-r from-indigo-900 via-indigo-800 to-purple-900 text-white p-3.5 rounded-xl shadow-xs space-y-2">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <div className="p-1.5 bg-white/10 rounded-lg backdrop-blur-xs">
+                          <Sparkles className="w-4 h-4 text-amber-300 animate-pulse" />
+                        </div>
+                        <div>
+                          <h4 className="font-bold text-xs">AI Sales Intelligence (Gemini AI)</h4>
+                          <p className="text-[10px] text-indigo-200">ประมวลผลข้อมูลลูกค้า & แนะนำกลยุทธ์ปิดการขาย</p>
+                        </div>
+                      </div>
+                      <button
+                        id="trigger-ai-analysis-btn"
+                        onClick={handleRunAIAnalysis}
+                        disabled={isAnalyzingAI}
+                        className="px-3 py-1.5 bg-white/20 hover:bg-white/30 active:scale-95 text-white rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer backdrop-blur-xs disabled:opacity-50 shrink-0"
+                      >
+                        {isAnalyzingAI ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin text-amber-300" />
+                            <span>กำลังวิเคราะห์...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Zap className="w-3.5 h-3.5 text-amber-300" />
+                            <span>{aiAnalysis ? "วิเคราะห์ใหม่" : "เริ่มวิเคราะห์ AI"}</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  </div>
+
+                  {aiError && (
+                    <div className="p-3 bg-rose-50 border border-rose-200 text-rose-800 text-xs rounded-lg flex items-center gap-2">
+                      <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                      <span>{aiError}</span>
+                    </div>
+                  )}
+
+                  {!aiAnalysis && !isAnalyzingAI && !aiError && (
+                    <div className="text-center py-8 bg-slate-50 border border-dashed border-slate-200 rounded-xl space-y-3">
+                      <div className="w-12 h-12 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
+                        <Sparkles className="w-6 h-6 text-indigo-600 animate-bounce" />
+                      </div>
+                      <div className="max-w-xs mx-auto">
+                        <h4 className="font-bold text-slate-800 text-xs">วิเคราะห์ศักยภาพและแนวโน้มลูกค้า</h4>
+                        <p className="text-[11px] text-slate-500 mt-1 leading-relaxed">
+                          ระบบ AI จะช่วยวิเคราะห์ประวัติการโทร โน้ต ปริมาณพัสดุ และสถานะ เพื่อคำนวณโอกาสปิดการขายพร้อมสคริปต์เสนอขาย
+                        </p>
+                      </div>
+                      <button
+                        id="start-ai-analysis-center-btn"
+                        onClick={handleRunAIAnalysis}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg text-xs transition-all shadow-xs cursor-pointer inline-flex items-center gap-2"
+                      >
+                        <Sparkles className="w-4 h-4 text-amber-300" />
+                        <span>วิเคราะห์ด้วย AI ทันที</span>
+                      </button>
+                    </div>
+                  )}
+
+                  {isAnalyzingAI && (
+                    <div className="text-center py-12 bg-indigo-50/50 border border-indigo-100 rounded-xl space-y-3">
+                      <Loader2 className="w-8 h-8 text-indigo-600 animate-spin mx-auto" />
+                      <p className="text-xs font-bold text-indigo-900">กำลังประมวลผลข้อมูลด้วย Gemini AI...</p>
+                      <p className="text-[10px] text-indigo-600">ประมวลผลพฤติกรรม ประวัติการโทร และประเมินโอกาสปิดการขาย</p>
+                    </div>
+                  )}
+
+                  {aiAnalysis && !isAnalyzingAI && (
+                    <div className="space-y-3">
+                      {/* Win Probability gauge */}
+                      <div className="p-3 bg-white border border-slate-200 rounded-xl shadow-2xs space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-slate-700 flex items-center gap-1.5">
+                            <TrendingUp className="w-4 h-4 text-indigo-600" />
+                            โอกาสปิดการขาย (Win Probability)
+                          </span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold ${
+                            aiAnalysis.dealUrgency === "high" ? "bg-emerald-100 text-emerald-800" :
+                            aiAnalysis.dealUrgency === "medium" ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-700"
+                          }`}>
+                            {aiAnalysis.dealUrgency === "high" ? "🔥 โอกาสปิดยอดสูง" : aiAnalysis.dealUrgency === "medium" ? "⚡ โอกาสปานกลาง" : "⏳ ติดตามระยะยาว"}
+                          </span>
+                        </div>
+
+                        <div className="space-y-1">
+                          <div className="flex justify-between text-xs font-bold font-mono">
+                            <span className="text-indigo-600">{aiAnalysis.winProbability}%</span>
+                            <span className="text-slate-400">100%</span>
+                          </div>
+                          <div className="w-full h-2.5 bg-slate-100 rounded-full overflow-hidden">
+                            <div
+                              className={`h-full transition-all duration-700 ${
+                                aiAnalysis.winProbability >= 70 ? "bg-emerald-500" :
+                                aiAnalysis.winProbability >= 40 ? "bg-amber-500" : "bg-blue-500"
+                              }`}
+                              style={{ width: `${aiAnalysis.winProbability}%` }}
+                            />
                           </div>
                         </div>
-                        <span className="text-[10px] text-indigo-600 hover:underline cursor-pointer">ดาวน์โหลด</span>
+                        <p className="text-[11px] text-slate-600 leading-relaxed pt-1 border-t border-slate-100">
+                          {aiAnalysis.summary}
+                        </p>
                       </div>
-                    ))}
-                    {(lead.files || []).length === 0 && (
-                      <div className="py-8 text-center text-gray-400 text-xs flex flex-col items-center justify-center gap-1">
-                        <UploadCloud className="w-6 h-6 text-gray-300" />
-                        <span>ยังไม่มีไฟล์ประกอบ อัปโหลดเพื่อบันทึกร่วม</span>
+
+                      {/* Persona */}
+                      <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1">
+                        <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">โปรไฟล์ลูกค้า (Customer Persona)</span>
+                        <p className="text-xs text-slate-800 leading-relaxed font-medium">{aiAnalysis.customerPersona}</p>
                       </div>
-                    )}
-                  </div>
+
+                      {/* Strengths and Challenges */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+                        <div className="p-2.5 bg-emerald-50/70 border border-emerald-100 rounded-xl space-y-1.5">
+                          <span className="font-bold text-emerald-800 text-[11px] flex items-center gap-1">
+                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+                            จุดเด่น / โอกาสเปิดขาย
+                          </span>
+                          <ul className="space-y-1">
+                            {aiAnalysis.strengths.map((item, i) => (
+                              <li key={i} className="text-[11px] text-emerald-950 flex items-start gap-1">
+                                <span className="text-emerald-500 font-bold">•</span>
+                                <span>{item}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        <div className="p-2.5 bg-amber-50/70 border border-amber-100 rounded-xl space-y-1.5">
+                          <span className="font-bold text-amber-800 text-[11px] flex items-center gap-1">
+                            <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+                            ข้อควรระวัง / อุปสรรค
+                          </span>
+                          <ul className="space-y-1">
+                            {aiAnalysis.challenges.map((item, i) => (
+                              <li key={i} className="text-[11px] text-amber-950 flex items-start gap-1">
+                                <span className="text-amber-500 font-bold">•</span>
+                                <span>{item}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+
+                      {/* Recommended Action */}
+                      <div className="p-3 bg-indigo-50 border border-indigo-100 rounded-xl space-y-1">
+                        <span className="text-[11px] font-bold text-indigo-900 flex items-center gap-1.5">
+                          <Lightbulb className="w-4 h-4 text-indigo-600 shrink-0" />
+                          ขั้นตอนถัดไปที่แนะนำ (Recommended Action)
+                        </span>
+                        <p className="text-xs text-indigo-950 leading-relaxed font-medium">{aiAnalysis.recommendedAction}</p>
+                      </div>
+
+                      {/* Script */}
+                      <div className="p-3 bg-white border border-slate-200 rounded-xl space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-[11px] font-bold text-slate-700">📞 บทพูดแนะนำในการโทร/ทักแชต (Script)</span>
+                          <button
+                            id="copy-ai-script-btn"
+                            onClick={() => {
+                              navigator.clipboard.writeText(aiAnalysis.salesPitchScript);
+                              setCopiedScript(true);
+                              setTimeout(() => setCopiedScript(false), 2000);
+                            }}
+                            className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded text-[10px] font-bold transition-colors flex items-center gap-1 cursor-pointer"
+                          >
+                            {copiedScript ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3" />}
+                            <span>{copiedScript ? "คัดลอกแล้ว" : "คัดลอกสคริปต์"}</span>
+                          </button>
+                        </div>
+                        <div className="p-2.5 bg-slate-50 border border-slate-200 rounded-lg text-xs italic text-slate-800 leading-relaxed font-sans">
+                          {aiAnalysis.salesPitchScript}
+                        </div>
+                      </div>
+
+                      {/* Suggested Offers */}
+                      <div className="p-3 bg-slate-50 border border-slate-200 rounded-xl space-y-1.5">
+                        <span className="text-[11px] font-bold text-slate-700 block">🎁 สิทธิประโยชน์/ข้อเสนอที่ควรนำเสนอ</span>
+                        <div className="flex flex-wrap gap-1.5">
+                          {aiAnalysis.suggestedOffers.map((offer, idx) => (
+                            <span key={idx} className="bg-white border border-slate-200 text-slate-800 px-2.5 py-1 rounded-lg text-[11px] font-medium shadow-2xs">
+                              {offer}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -978,6 +1620,36 @@ export default function LeadDetailsModal({
           </button>
         </div>
       </motion.div>
+
+      {/* Lightbox Modal for uploaded images */}
+      {lightboxUrl && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[100] flex items-center justify-center p-4" onClick={() => setLightboxUrl(null)}>
+          <div className="relative max-w-4xl max-h-[90vh] bg-slate-900 p-2 rounded-2xl shadow-2xl flex flex-col items-center" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setLightboxUrl(null)}
+              className="absolute top-4 right-4 p-2 bg-black/60 hover:bg-black text-white rounded-full transition-colors cursor-pointer z-10"
+            >
+              <X className="w-5 h-5" />
+            </button>
+            <img 
+              src={lightboxUrl} 
+              alt="Uploaded document full view" 
+              className="max-w-full max-h-[80vh] object-contain rounded-xl" 
+            />
+            <div className="mt-2 text-center">
+              <a
+                href={lightboxUrl}
+                download="uploaded_document"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-lg transition-colors"
+              >
+                <Download className="w-4 h-4" /> ดาวน์โหลดรูปภาพนี้
+              </a>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

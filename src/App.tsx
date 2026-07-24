@@ -13,7 +13,8 @@ import LoginView from "./components/LoginView";
 import { 
   LayoutDashboard, Users, PhoneCall, FileText, Settings, 
   UserCheck, BarChart3, MessageSquare, LogOut, Menu, 
-  RefreshCw, CloudLightning, ShieldAlert, X, ChevronRight, Sparkles 
+  RefreshCw, CloudLightning, ShieldAlert, X, ChevronRight, Sparkles,
+  Sun, Moon, Palette
 } from "lucide-react";
 import { motion } from "motion/react";
 import { db } from "./firebase";
@@ -25,6 +26,22 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<string | null>(() => {
     return localStorage.getItem("crm_current_user");
   });
+
+  // Minimalist Theme state: "light" (มินิมอลสว่าง) | "dark" (มินิมอลเข้ม) | "soft" (ซอฟต์สบายตา)
+  const [theme, setTheme] = useState<"light" | "dark" | "soft">(() => {
+    return (localStorage.getItem("crm_theme") as "light" | "dark" | "soft") || "light";
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", theme);
+    if (theme === "dark") {
+      document.documentElement.classList.add("dark");
+    } else {
+      document.documentElement.classList.remove("dark");
+    }
+    localStorage.setItem("crm_theme", theme);
+  }, [theme]);
+
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<string>("dashboard");
   const [selectedLead, setSelectedLead] = useState<Lead | null>(null);
@@ -514,12 +531,13 @@ export default function App() {
     }
   };
 
-  // 6. LOG FILE SIMULATION
+  // 6. LOG FILE UPLOAD
   const handleAddFile = async (
     leadId: string, 
     name: string, 
     size: string, 
-    type: "image" | "pdf" | "other"
+    type: "image" | "pdf" | "other",
+    url?: string
   ) => {
     setErrorMsg(null);
     try {
@@ -529,7 +547,7 @@ export default function App() {
       const newFile = {
         id: `id_${Math.random().toString(36).substring(2, 11)}`,
         name,
-        url: "#",
+        url: url || "#",
         type: type || "image",
         size: size || "120 KB",
         uploadedAt: new Date().toISOString()
@@ -649,6 +667,7 @@ export default function App() {
             onAddLead={handleAddLead} 
             onUpdateLeadStatus={handleUpdateLeadStatus} 
             onSelectLead={setSelectedLead} 
+            onUpdateLead={handleUpdateLead}
           />
         );
       case "followup":
@@ -702,7 +721,7 @@ export default function App() {
           {/* Logo Brand Header */}
           <div className="mb-2">
             <h1 className="text-xl font-bold tracking-tight text-blue-600">Mylogiz CRM</h1>
-            <p className="text-xs text-slate-400 font-medium uppercase mt-1 tracking-wider">Sales & Logistics</p>
+            <p className="text-xs text-slate-400 font-medium uppercase mt-1 tracking-wider">Sales Logistics</p>
           </div>
 
           {/* Navigation Links list */}
@@ -823,25 +842,62 @@ export default function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
+            {/* Minimalist Theme Switcher 3-way Toggle */}
+            <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[11px] font-bold shrink-0 shadow-3xs" id="theme-switcher-toggle">
+              <button
+                id="theme-light-btn"
+                onClick={() => setTheme("light")}
+                className={`px-2 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                  theme === "light" ? "bg-white text-amber-600 shadow-2xs font-extrabold" : "text-slate-400 hover:text-slate-700"
+                }`}
+                title="โหมดมินิมอลสว่าง (Soft Minimalist Light)"
+              >
+                <Sun className="w-3.5 h-3.5 text-amber-500" />
+                <span className="hidden sm:inline">สว่าง</span>
+              </button>
+              <button
+                id="theme-soft-btn"
+                onClick={() => setTheme("soft")}
+                className={`px-2 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                  theme === "soft" ? "bg-white text-indigo-700 shadow-2xs font-extrabold" : "text-slate-400 hover:text-slate-700"
+                }`}
+                title="โหมดซอฟต์สบายตา (Warm Cream Natural)"
+              >
+                <Palette className="w-3.5 h-3.5 text-indigo-500" />
+                <span className="hidden sm:inline">ซอฟต์</span>
+              </button>
+              <button
+                id="theme-dark-btn"
+                onClick={() => setTheme("dark")}
+                className={`px-2 py-1 rounded-md transition-all cursor-pointer flex items-center gap-1 ${
+                  theme === "dark" ? "bg-slate-900 text-blue-400 shadow-2xs font-extrabold" : "text-slate-400 hover:text-slate-700"
+                }`}
+                title="โหมดมินิมอลเข้ม (Dark Luxury)"
+              >
+                <Moon className="w-3.5 h-3.5 text-blue-400" />
+                <span className="hidden sm:inline">เข้ม</span>
+              </button>
+            </div>
+
             {/* Phere/Manager lead visibility filter toggle */}
             {isManager && (
-              <div className="flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[11px] font-bold shrink-0 shadow-3xs mr-1">
+              <div className="hidden sm:flex items-center bg-slate-100 p-0.5 rounded-lg border border-slate-200 text-[11px] font-bold shrink-0 shadow-3xs">
                 <button
                   id="filter-all-leads-btn"
                   onClick={() => setPheresFilterMode("all")}
-                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${pheresFilterMode === "all" ? "bg-white text-blue-700 shadow-2xs font-extrabold" : "text-slate-500 hover:text-slate-800"}`}
+                  className={`px-2 py-1 rounded-md transition-all cursor-pointer ${pheresFilterMode === "all" ? "bg-white text-blue-700 shadow-2xs font-extrabold" : "text-slate-500 hover:text-slate-800"}`}
                   title="ดูข้อมูลลูกค้าของทุกคน"
                 >
-                  👥 ของทุกคน ({leads.length})
+                  👥 ทุกคน ({leads.length})
                 </button>
                 <button
                   id="filter-own-leads-btn"
                   onClick={() => setPheresFilterMode("own")}
-                  className={`px-2.5 py-1 rounded-md transition-all cursor-pointer ${pheresFilterMode === "own" ? "bg-white text-blue-700 shadow-2xs font-extrabold" : "text-slate-500 hover:text-slate-800"}`}
+                  className={`px-2 py-1 rounded-md transition-all cursor-pointer ${pheresFilterMode === "own" ? "bg-white text-blue-700 shadow-2xs font-extrabold" : "text-slate-500 hover:text-slate-800"}`}
                   title="ดูเฉพาะข้อมูลลูกค้าของตัวเอง"
                 >
-                  👤 เฉพาะฉัน ({leads.filter(l => l.salesPerson === currentUser).length})
+                  👤 ฉัน ({leads.filter(l => l.salesPerson === currentUser).length})
                 </button>
               </div>
             )}
@@ -896,7 +952,7 @@ export default function App() {
         )}
 
         {/* Dynamic Inner View stage */}
-        <main className="p-4 sm:p-6 flex-1 overflow-y-auto max-w-7xl w-full mx-auto space-y-6">
+        <main className="p-4 sm:p-6 pb-24 lg:pb-6 flex-1 overflow-y-auto max-w-7xl w-full mx-auto space-y-6">
           {loading ? (
             <div className="h-96 flex flex-col items-center justify-center gap-3 text-xs text-gray-500">
               <RefreshCw className="w-8 h-8 text-blue-600 animate-spin" />
@@ -908,11 +964,40 @@ export default function App() {
         </main>
       </div>
 
+      {/* 5. MOBILE BOTTOM NAVIGATION BAR (1-tap access on smartphones) */}
+      <div id="mobile-bottom-nav" className="lg:hidden fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800 z-40 px-1 py-1 flex items-center justify-around shadow-lg">
+        {SIDEBAR_LINKS.slice(0, 5).map(link => {
+          const isActive = activeTab === link.id;
+          return (
+            <button
+              key={link.id}
+              id={`mobile-bottom-${link.id}`}
+              onClick={() => handleNavigate(link.id)}
+              className={`flex flex-col items-center gap-0.5 py-1 px-1 rounded-lg text-[10px] font-bold transition-all cursor-pointer ${
+                isActive ? "text-blue-600 dark:text-blue-400 font-extrabold" : "text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+              }`}
+            >
+              <link.icon className={`w-4 h-4 ${isActive ? "scale-110 text-blue-600 dark:text-blue-400" : ""}`} />
+              <span className="truncate max-w-[58px] text-[9px]">{link.label.split(" ")[0]}</span>
+            </button>
+          );
+        })}
+        <button
+          id="mobile-bottom-more-btn"
+          onClick={() => setSidebarOpen(true)}
+          className="flex flex-col items-center gap-0.5 py-1 px-1 text-slate-400 hover:text-slate-600 rounded-lg text-[10px] font-bold cursor-pointer"
+        >
+          <Menu className="w-4 h-4" />
+          <span className="text-[9px]">เมนูเพิ่ม</span>
+        </button>
+      </div>
+
       {/* 4. DETAILS POPUP MODAL (Rendered globally on top if a lead is selected) */}
       {selectedLead && (
         <LeadDetailsModal 
           lead={selectedLead} 
           salespersons={salespersons}
+          currentUser={currentUser}
           onClose={() => setSelectedLead(null)} 
           onUpdateLead={handleUpdateLead}
           onAddNote={handleAddNote}
