@@ -1,0 +1,983 @@
+import React, { useState } from "react";
+import { Lead, LeadStatus, StatusLabels, StatusColors, Note, TimelineItem, Documents, THAI_PROVINCES, TRANSPORT_CARRIERS } from "../types";
+import { 
+  X, Calendar, Clock, Star, Phone, MapPin, Tag, Briefcase, 
+  Plus, Trash2, FileText, UploadCloud, MessageSquare, ClipboardCheck, 
+  Clock3, ShieldCheck, HelpCircle, Package, Send
+} from "lucide-react";
+import { motion } from "motion/react";
+
+interface LeadDetailsModalProps {
+  lead: Lead;
+  salespersons?: string[];
+  onClose: () => void;
+  onUpdateLead: (updatedLead: Lead) => void;
+  onAddNote: (leadId: string, text: string, author: string) => void;
+  onAddCall: (leadId: string, answered: boolean, interestLevel: number, notes: string, nextFollowUpInDays?: number, customFollowUpDate?: string) => void;
+  onAddFile: (leadId: string, name: string, size: string, type: "image" | "pdf" | "other") => void;
+}
+
+const ALL_STATUSES = Object.values(LeadStatus);
+const PROVINCES = THAI_PROVINCES;
+
+
+export default function LeadDetailsModal({ 
+  lead, salespersons = [], onClose, onUpdateLead, onAddNote, onAddCall, onAddFile 
+}: LeadDetailsModalProps) {
+  const [activeTab, setActiveTab] = useState<"timeline" | "calls" | "notes" | "files">("timeline");
+  
+  // Edit state
+  const [isEditing, setIsEditing] = useState(false);
+  const [editShopName, setEditShopName] = useState(lead.shopName);
+  const [editContactName, setEditContactName] = useState(lead.contactName);
+  const [editPhone, setEditPhone] = useState(lead.phone);
+  const [editLineId, setEditLineId] = useState(lead.lineId);
+  const [editFacebook, setEditFacebook] = useState(lead.facebook);
+  const [editProvince, setEditProvince] = useState(lead.province);
+  const [editAddress, setEditAddress] = useState(lead.address);
+  const [editShipments, setEditShipments] = useState(lead.shipmentsPerDay);
+  const [editCompetitor, setEditCompetitor] = useState(lead.competitor);
+  const [editScore, setEditScore] = useState(lead.score);
+  const [editSalesperson, setEditSalesperson] = useState(lead.salesPerson);
+  const [editTransport, setEditTransport] = useState<string[]>(lead.preferredTransport || []);
+  const [editCustomerType, setEditCustomerType] = useState<"individual" | "corporate">(lead.customerType || "individual");
+  
+  // Custom billing fields (Visible if registered or activated)
+  const [editCustomerCode, setEditCustomerCode] = useState(lead.customerCode || "");
+  const [editRatePlan, setEditRatePlan] = useState(lead.ratePlan || "");
+  const [editPaymentType, setEditPaymentType] = useState(lead.paymentType || "เติมเงิน");
+
+  // Notes state
+  const [noteText, setNoteText] = useState("");
+  const [noteAuthor, setNoteAuthor] = useState("เซลส์สมชาย");
+
+  // Calls logger state
+  const [callAnswered, setCallAnswered] = useState(true);
+  const [callInterest, setCallInterest] = useState(4);
+  const [callNotes, setCallNotes] = useState("");
+  const [callFollowDays, setCallFollowDays] = useState("3");
+  const [customCallDate, setCustomCallDate] = useState("");
+
+  // File upload simulation
+  const [fileName, setFileName] = useState("");
+  const [fileType, setFileType] = useState<"image" | "pdf" | "other">("image");
+
+  // Follow-up setting state
+  const [followUpDate, setFollowUpDate] = useState(lead.followUp?.date || "");
+  const [followUpTime, setFollowUpTime] = useState(lead.followUp?.time || "10:00");
+  const [followUpCompleted, setFollowUpCompleted] = useState(lead.followUp?.isCompleted || false);
+
+  // Documents Checklist computations
+  const docs = lead.documents || { idCard: false, bookBank: false, companyReg: false, taxDoc: false, storefrontPhoto: false };
+  
+  const isCorporate = lead.customerType === "corporate";
+
+  const getMissingDocsText = () => {
+    const missing: string[] = [];
+    if (!docs.idCard) missing.push("บัตรประชาชน");
+    if (isCorporate && !docs.companyReg) missing.push("หนังสือรับรองบริษัท");
+    if (isCorporate && !docs.taxDoc) missing.push("ใบทะเบียนภาษี (ภพ.20)");
+    if (!docs.storefrontPhoto) missing.push("รูปถ่ายหน้าร้าน");
+    
+    if (missing.length === 0) return "✓ เอกสารยื่นครบถ้วนสมบูรณ์";
+    return `เหลือ ${missing.join(", ")}`;
+  };
+
+  const hasMissingDocs = isCorporate 
+    ? (!docs.idCard || !docs.companyReg || !docs.taxDoc || !docs.storefrontPhoto)
+    : (!docs.idCard || !docs.storefrontPhoto);
+
+  // Handle updates
+  const handleSaveDetails = (e: React.FormEvent) => {
+    e.preventDefault();
+    onUpdateLead({
+      ...lead,
+      shopName: editShopName,
+      contactName: editContactName,
+      phone: editPhone,
+      lineId: editLineId,
+      facebook: editFacebook,
+      province: editProvince,
+      address: editAddress,
+      shipmentsPerDay: Number(editShipments) || 0,
+      competitor: editCompetitor,
+      score: editScore,
+      salesPerson: editSalesperson,
+      preferredTransport: editTransport,
+      customerType: editCustomerType,
+      customerCode: editCustomerCode || undefined,
+      ratePlan: editRatePlan || undefined,
+      paymentType: editPaymentType || undefined,
+      followUp: {
+        date: followUpDate,
+        time: followUpTime,
+        isCompleted: followUpCompleted
+      }
+    });
+    setIsEditing(false);
+  };
+
+  const handleToggleDoc = (key: keyof Documents) => {
+    const updatedDocs = {
+      ...docs,
+      [key]: !docs[key]
+    };
+    onUpdateLead({
+      ...lead,
+      documents: updatedDocs
+    });
+  };
+
+  const handleUpdateStatus = (status: LeadStatus) => {
+    onUpdateLead({
+      ...lead,
+      status
+    });
+  };
+
+  const handleSaveFollowUpSettings = () => {
+    onUpdateLead({
+      ...lead,
+      followUp: {
+        date: followUpDate,
+        time: followUpTime,
+        isCompleted: followUpCompleted
+      }
+    });
+  };
+
+  const submitNote = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!noteText.trim()) return;
+    onAddNote(lead.id, noteText, noteAuthor);
+    setNoteText("");
+  };
+
+  const submitCall = (e: React.FormEvent) => {
+    e.preventDefault();
+    const days = callFollowDays === "custom" ? undefined : (Number(callFollowDays) || undefined);
+    const customDate = callFollowDays === "custom" && customCallDate ? customCallDate : undefined;
+    
+    onAddCall(
+      lead.id, 
+      callAnswered, 
+      callInterest, 
+      callNotes || (callAnswered ? "โทรสำเร็จลูกค้าสนใจข้อมูล" : "ไม่รับสาย"), 
+      days, 
+      customDate
+    );
+    setCallNotes("");
+    setActiveTab("timeline");
+  };
+
+  const submitFile = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!fileName.trim()) return;
+    const fakeSize = `${Math.floor(100 + Math.random() * 900)} KB`;
+    onAddFile(lead.id, fileName, fakeSize, fileType);
+    setFileName("");
+  };
+
+  const toggleTransport = (t: string) => {
+    if (editTransport.includes(t)) {
+      setEditTransport(editTransport.filter(x => x !== t));
+    } else {
+      setEditTransport([...editTransport, t]);
+    }
+  };
+
+  // Check if followUp is today or overdue
+  const todayStr = new Date().toISOString().split("T")[0];
+  const isFollowUpOverdue = lead.followUp && !lead.followUp.isCompleted && lead.followUp.date < todayStr;
+  const isFollowUpToday = lead.followUp && !lead.followUp.isCompleted && lead.followUp.date === todayStr;
+
+  return (
+    <div id="lead-details-modal-container" className="fixed inset-0 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">
+      <motion.div 
+        initial={{ scale: 0.95, opacity: 0 }} 
+        animate={{ scale: 1, opacity: 1 }} 
+        className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-5xl w-full p-6 space-y-4 max-h-[95vh] overflow-y-auto flex flex-col"
+      >
+        {/* Header bar */}
+        <div className="flex justify-between items-start border-b border-slate-200 pb-3">
+          <div className="space-y-1">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-bold text-slate-900 font-sans">{lead.shopName}</h2>
+              <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${StatusColors[lead.status]}`}>
+                {StatusLabels[lead.status]}
+              </span>
+            </div>
+            <p className="text-xs text-slate-400">เซลส์ดูแล: <span className="font-semibold text-slate-700">{lead.salesPerson}</span> | ช่องทางเข้ามา: <span className="font-semibold text-slate-700">{lead.channel}</span> | ยอดส่ง: <span className="font-semibold text-blue-600">{lead.shipmentsPerDay} ชิ้น/เดือน</span></p>
+          </div>
+          <button 
+            id="close-lead-details-modal-btn"
+            onClick={onClose} 
+            className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-50 transition-colors cursor-pointer"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Dynamic Warning for overdue calls or missing documents */}
+        {(isFollowUpToday || isFollowUpOverdue || (lead.status === LeadStatus.WAITING_DOCS && hasMissingDocs)) && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            {/* Call Warning */}
+            {(isFollowUpToday || isFollowUpOverdue) && (
+              <div id="overdue-call-banner" className={`p-3 rounded-lg flex items-center justify-between border ${isFollowUpOverdue ? "bg-red-50 text-red-900 border-red-100" : "bg-amber-50 text-amber-900 border-amber-100"}`}>
+                <div className="flex items-center gap-2">
+                  <Phone className="w-4 h-4 text-red-600 shrink-0" />
+                  <div>
+                    <span className="font-bold block">{isFollowUpOverdue ? "🔴 เกินกำหนดการนัดติดตาม" : "🟡 มีกำหนดติดต่อในวันนี้"}</span>
+                    <span className="text-[10px] text-gray-500">นัดหมาย: {lead.followUp.date} เวลา {lead.followUp.time} น.</span>
+                  </div>
+                </div>
+                <button 
+                  id="mark-call-done-quick"
+                  onClick={() => {
+                    onUpdateLead({
+                      ...lead,
+                      followUp: { ...lead.followUp, isCompleted: true }
+                    });
+                    setFollowUpCompleted(true);
+                  }}
+                  className="bg-white hover:bg-gray-100 text-[10px] font-bold text-gray-700 py-1 px-2 border rounded transition-colors shrink-0"
+                >
+                  ทำเครื่องหมายเป็นโทรแล้ว
+                </button>
+              </div>
+            )}
+
+            {/* Document Check alert */}
+            {lead.status === LeadStatus.WAITING_DOCS && (
+              <div id="missing-docs-banner" className={`p-3 rounded-lg flex items-center gap-2 border ${hasMissingDocs ? "bg-amber-50 text-amber-900 border-amber-100" : "bg-emerald-50 text-emerald-900 border-emerald-100"}`}>
+                <FileText className={`w-4 h-4 shrink-0 ${hasMissingDocs ? "text-amber-600" : "text-emerald-600"}`} />
+                <div>
+                  <span className="font-bold block">{hasMissingDocs ? "⚠️ เอกสารยื่นสมัครยังไม่สมบูรณ์" : "❇️ เอกสารครบถ้วนสมบูรณ์"}</span>
+                  <span className="text-[10px] text-gray-500 font-medium">{getMissingDocsText()}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Modal Grid content */}
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1 min-h-0 overflow-y-auto">
+          
+          {/* Left Column (6/12) - Customer Core Profile, Documents check, Billing info */}
+          <div className="lg:col-span-7 space-y-4">
+            
+            {/* Status quick switcher */}
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between text-xs">
+              <span className="font-bold text-slate-700">ปรับสถานะ Pipeline:</span>
+              <select
+                id="details-status-switcher"
+                value={lead.status}
+                onChange={(e) => handleUpdateStatus(e.target.value as LeadStatus)}
+                className="bg-white border border-slate-200 rounded px-2.5 py-1 text-slate-600 font-semibold focus:outline-none cursor-pointer"
+              >
+                {ALL_STATUSES.map(st => (
+                  <option key={st} value={st}>{StatusLabels[st]}</option>
+                ))}
+              </select>
+            </div>
+
+            {/* Profile detail card */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm relative">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Briefcase className="w-4 h-4 text-blue-500" /> รายละเอียดข้อมูลร้านค้า
+                </h3>
+                <button
+                  id="toggle-edit-details-btn"
+                  onClick={() => setIsEditing(!isEditing)}
+                  className="text-xs font-bold text-blue-600 hover:text-blue-800 transition-colors cursor-pointer"
+                >
+                  {isEditing ? "ยกเลิกแก้ไข" : "📝 แก้ไขข้อมูล"}
+                </button>
+              </div>
+
+              {isEditing ? (
+                /* EDIT FORM */
+                <form onSubmit={handleSaveDetails} className="space-y-3 text-xs">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="col-span-2">
+                      <label className="text-gray-500 font-semibold block mb-0.5">ชื่อร้านค้า</label>
+                      <input 
+                        id="edit-shop-name"
+                        type="text" 
+                        value={editShopName} 
+                        onChange={(e) => setEditShopName(e.target.value)} 
+                        className="w-full bg-slate-50 border p-2 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 font-semibold block mb-0.5">ชื่อผู้ติดต่อ</label>
+                      <input 
+                        id="edit-contact-name"
+                        type="text" 
+                        value={editContactName} 
+                        onChange={(e) => setEditContactName(e.target.value)} 
+                        className="w-full bg-slate-50 border p-2 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 font-semibold block mb-0.5">เบอร์โทรศัพท์</label>
+                      <input 
+                        id="edit-phone"
+                        type="text" 
+                        value={editPhone} 
+                        onChange={(e) => setEditPhone(e.target.value)} 
+                        className="w-full bg-slate-50 border p-2 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 font-semibold block mb-0.5">LINE ID</label>
+                      <input 
+                        id="edit-line-id"
+                        type="text" 
+                        value={editLineId} 
+                        onChange={(e) => setEditLineId(e.target.value)} 
+                        className="w-full bg-slate-50 border p-2 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 font-semibold block mb-0.5">Facebook Page</label>
+                      <input 
+                        id="edit-facebook"
+                        type="text" 
+                        value={editFacebook} 
+                        onChange={(e) => setEditFacebook(e.target.value)} 
+                        className="w-full bg-slate-50 border p-2 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 font-semibold block mb-0.5">จังหวัด</label>
+                      <select 
+                        id="edit-province"
+                        value={editProvince} 
+                        onChange={(e) => setEditProvince(e.target.value)} 
+                        className="w-full bg-slate-50 border p-2 rounded"
+                      >
+                        {PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-gray-500 font-semibold block mb-0.5">เซลส์ผู้ดูแล</label>
+                      <select 
+                        id="edit-salesperson"
+                        value={editSalesperson} 
+                        onChange={(e) => setEditSalesperson(e.target.value)} 
+                        className="w-full bg-slate-50 border p-2 rounded"
+                      >
+                        {salespersons.map((sp) => (
+                          <option key={sp} value={sp}>{sp}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
+                      <label className="text-gray-500 font-semibold block mb-0.5">ยอดส่งต่อเดือน (ชิ้น/เดือน)</label>
+                      <input 
+                        id="edit-shipments"
+                        type="number" 
+                        value={editShipments} 
+                        onChange={(e) => setEditShipments(Number(e.target.value))} 
+                        className="w-full bg-slate-50 border p-2 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 font-semibold block mb-0.5">คู่แข่งที่ใช้อยู่</label>
+                      <input 
+                        id="edit-competitor"
+                        type="text" 
+                        value={editCompetitor} 
+                        onChange={(e) => setEditCompetitor(e.target.value)} 
+                        className="w-full bg-slate-50 border p-2 rounded"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-gray-500 font-semibold block mb-0.5">ประเภทลูกค้า</label>
+                      <select
+                        id="edit-customer-type"
+                        value={editCustomerType}
+                        onChange={(e) => setEditCustomerType(e.target.value as "individual" | "corporate")}
+                        className="w-full bg-slate-50 border p-2.5 rounded font-bold"
+                      >
+                        <option value="individual">👤 บุคคลธรรมดา</option>
+                        <option value="corporate">🏢 นิติบุคคล</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-gray-500 font-semibold block mb-0.5">ที่อยู่อย่างละเอียด</label>
+                    <textarea 
+                      id="edit-address"
+                      rows={2} 
+                      value={editAddress} 
+                      onChange={(e) => setEditAddress(e.target.value)} 
+                      className="w-full bg-slate-50 border p-2 rounded"
+                    />
+                  </div>
+
+                  {/* Registered/Activated Fields */}
+                  {(lead.status === LeadStatus.REGISTERED || lead.status === LeadStatus.ACTIVATED || lead.status === LeadStatus.REGULAR) && (
+                    <div className="bg-slate-50 p-3 rounded-lg border space-y-2">
+                      <p className="font-bold text-gray-700">ข้อมูลรหัสและการตั้งค่าเปิดพอร์ต</p>
+                      <div className="grid grid-cols-3 gap-2">
+                        <div>
+                          <label className="text-gray-500 block text-[10px]">รหัสลูกค้า (Customer Code)</label>
+                          <input type="text" value={editCustomerCode} onChange={(e) => setEditCustomerCode(e.target.value)} className="w-full bg-white border p-1 rounded" placeholder="MLZ-xxxx" />
+                        </div>
+                        <div>
+                          <label className="text-gray-500 block text-[10px]">เรทราคาที่เสนอ</label>
+                          <input type="text" value={editRatePlan} onChange={(e) => setEditRatePlan(e.target.value)} className="w-full bg-white border p-1 rounded" placeholder="เช่น VIP 18" />
+                        </div>
+                        <div>
+                          <label className="text-gray-500 block text-[10px]">ประเภทชำระเงิน</label>
+                          <select value={editPaymentType} onChange={(e) => setEditPaymentType(e.target.value)} className="w-full bg-white border p-1 rounded">
+                            <option value="เติมเงิน">เติมเงิน</option>
+                            <option value="เครดิต">เครดิต</option>
+                          </select>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="space-y-1">
+                    <label className="text-gray-500 font-semibold block mb-0.5">สนใจขนส่ง</label>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                      {TRANSPORT_CARRIERS.map(t => (
+                        <label key={t} className="flex items-center gap-1 cursor-pointer">
+                          <input type="checkbox" checked={editTransport.includes(t)} onChange={() => toggleTransport(t)} />
+                          <span className="capitalize">{t}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end gap-2 pt-2 border-t">
+                    <button type="button" onClick={() => setIsEditing(false)} className="px-3 py-1.5 border rounded text-gray-600">ยกเลิก</button>
+                    <button id="save-edit-details-btn" type="submit" className="px-4 py-1.5 bg-indigo-600 text-white rounded font-bold shadow-xs">บันทึกข้อมูล</button>
+                  </div>
+                </form>
+              ) : (
+                /* READ-ONLY DISPLAY */
+                <div className="space-y-3 text-xs text-gray-700">
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">ชื่อผู้ติดต่อ</span>
+                      <span className="font-semibold">{lead.contactName || "-"}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">เบอร์โทรศัพท์</span>
+                      <span className="font-semibold font-mono">{lead.phone || "-"}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">LINE ID</span>
+                      <span className="font-semibold text-indigo-600">{lead.lineId ? `@${lead.lineId}` : "-"}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">Facebook Page</span>
+                      <span className="font-semibold truncate block">{lead.facebook || "-"}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">จังหวัดที่จัดส่ง</span>
+                      <span className="font-semibold">{lead.province}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">ขนส่งปัจจุบัน / คู่แข่ง</span>
+                      <span className="font-semibold text-rose-600">{lead.competitor || "ไม่มี"}</span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">ยอดจัดส่งพัสดุเฉลี่ย</span>
+                      <span className="font-bold text-gray-900 font-mono text-sm">{lead.shipmentsPerDay} <span className="text-xs font-normal text-gray-500">ชิ้น/เดือน</span></span>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">ค่ายขนส่งที่สนใจ</span>
+                      <div className="flex gap-1.5 mt-0.5">
+                        {lead.preferredTransport?.map(t => (
+                          <span key={t} className="px-1.5 py-0.5 bg-indigo-50 text-indigo-700 rounded text-[9px] font-bold">{t}</span>
+                        )) || "-"}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">ระดับความสนใจ (Lead Score)</span>
+                      <div className="flex text-amber-400 mt-1">
+                        {Array.from({ length: 5 }).map((_, i) => (
+                          <Star key={i} className={`w-3.5 h-3.5 ${i < lead.score ? "fill-amber-400" : "text-gray-200"}`} />
+                        ))}
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">ประเภทลูกค้า</span>
+                      <span className={`inline-flex items-center gap-1 px-2 py-0.5 mt-1 rounded font-bold border text-[10px] ${lead.customerType === "corporate" ? "bg-indigo-50 border-indigo-200 text-indigo-700" : "bg-teal-50 border-teal-200 text-teal-700"}`}>
+                        {lead.customerType === "corporate" ? "🏢 นิติบุคคล" : "👤 บุคคลธรรมดา"}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div>
+                    <span className="text-gray-400 block text-[10px]">ที่อยู่รับของเข้าระบบ</span>
+                    <p className="font-medium bg-slate-50 p-2.5 rounded-lg border border-gray-100 mt-1 leading-relaxed">{lead.address || "ยังไม่ได้บันทึกที่อยู่"}</p>
+                  </div>
+
+                  {/* Registered Customer Code Block */}
+                  {(lead.customerCode || lead.ratePlan) && (
+                    <div className="bg-indigo-50/50 p-3 rounded-lg border border-indigo-100 grid grid-cols-3 gap-2">
+                      <div>
+                        <span className="text-indigo-950 block text-[9px] font-bold uppercase">รหัสลูกค้าสมัครแล้ว</span>
+                        <span className="text-xs font-bold text-indigo-800 font-mono">{lead.customerCode || "ไม่มี"}</span>
+                      </div>
+                      <div>
+                        <span className="text-indigo-950 block text-[9px] font-bold uppercase">เรทราคาเสนอขาย</span>
+                        <span className="text-xs font-bold text-indigo-800">{lead.ratePlan || "เรททั่วไป"}</span>
+                      </div>
+                      <div>
+                        <span className="text-indigo-950 block text-[9px] font-bold uppercase">ประเภทจัดเก็บเงิน</span>
+                        <span className="text-xs font-bold text-indigo-800">{lead.paymentType || "เติมเงิน"}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Document Checklist checklist layout */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <ClipboardCheck className="w-4 h-4 text-purple-500" /> ตรวจเช็คเอกสารสมัครสมาชิก (Document Checklist)
+              </h3>
+              
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+                {[
+                  { key: "idCard", label: "บัตรประชาชน", desc: "สําเนาบัตรเจ้าของร้าน" },
+                  { key: "bookBank", label: "Book Bank (ไม่บังคับ)", desc: "สําหรับรับเงิน COD" },
+                  { key: "companyReg", label: "หนังสือรับรอง", desc: "นิติบุคคล (ถ้ามี)" },
+                  { key: "taxDoc", label: "ใบภาษี (ภพ.20)", desc: "ภาษีมูลค่าเพิ่ม (ถ้ามี)" },
+                  { key: "storefrontPhoto", label: "รูปถ่ายหน้าร้าน", desc: "รูปถ่ายหน้าร้านค้า/ป้ายร้าน" }
+                ].map(docItem => {
+                  const isChecked = docs[docItem.key as keyof Documents];
+                  return (
+                    <button
+                      key={docItem.key}
+                      id={`doc-check-btn-${docItem.key}`}
+                      type="button"
+                      onClick={() => handleToggleDoc(docItem.key as keyof Documents)}
+                      className={`p-3 rounded-xl border text-left flex flex-col justify-between h-20 transition-all cursor-pointer ${isChecked ? "bg-purple-50 border-purple-200 text-purple-900 font-semibold" : "bg-slate-50 border-slate-200 hover:bg-slate-100 text-slate-500"}`}
+                    >
+                      <span className="font-bold block leading-tight">{docItem.label}</span>
+                      <div className="flex items-center justify-between w-full mt-2">
+                        <span className="text-[9px] text-slate-400 leading-none">{docItem.desc}</span>
+                        <div className={`w-4 h-4 rounded-full border flex items-center justify-center shrink-0 ${isChecked ? "bg-purple-600 border-purple-600 text-white" : "border-slate-300 bg-white"}`}>
+                          {isChecked && <ShieldCheck className="w-3 h-3" />}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Quick Follow-up Scheduler Panel */}
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+                <Clock3 className="w-4 h-4 text-amber-500" /> บันทึกวันและเวลาติดตามงาน (Follow Up Plan)
+              </h3>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end text-xs">
+                <div>
+                  <label className="text-gray-400 block text-[10px] mb-1">วันที่ต้องการโทรติดตาม</label>
+                  <div className="relative">
+                    <input 
+                      id="details-follow-date"
+                      type="date" 
+                      value={followUpDate} 
+                      onChange={(e) => setFollowUpDate(e.target.value)}
+                      className="w-full bg-slate-50 border p-2 rounded focus:outline-none"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-gray-400 block text-[10px] mb-1">เวลาที่นัดหมาย</label>
+                  <input 
+                    id="details-follow-time"
+                    type="time" 
+                    value={followUpTime} 
+                    onChange={(e) => setFollowUpTime(e.target.value)}
+                    className="w-full bg-slate-50 border p-2 rounded focus:outline-none"
+                  />
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    id="save-follow-settings-btn"
+                    type="button"
+                    onClick={handleSaveFollowUpSettings}
+                    className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold p-2.5 rounded text-[11px] transition-colors cursor-pointer text-center"
+                  >
+                    บันทึกแผนโทร
+                  </button>
+                  
+                  <button
+                    id="toggle-follow-completed-btn"
+                    type="button"
+                    onClick={() => {
+                      const updatedVal = !followUpCompleted;
+                      setFollowUpCompleted(updatedVal);
+                      onUpdateLead({
+                        ...lead,
+                        followUp: {
+                          date: followUpDate,
+                          time: followUpTime,
+                          isCompleted: updatedVal
+                        }
+                      });
+                    }}
+                    className={`px-3 py-2.5 border rounded flex items-center justify-center cursor-pointer transition-colors ${followUpCompleted ? "bg-green-50 border-green-200 text-green-700 font-bold" : "bg-white border-gray-200 hover:bg-gray-50 text-gray-400"}`}
+                    title="ติ๊กเครื่องหมายว่าเคลียร์สายแล้ว"
+                  >
+                    {followUpCompleted ? "โทรแล้ว" : "รอดำเนินการ"}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+          </div>
+
+          {/* Right Column (5/12) - Tabbed interaction logs (Timeline, Calls, Notes, Files) */}
+          <div className="lg:col-span-5 flex flex-col bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden min-h-[380px]">
+            
+            {/* Tabs Selector Navigation */}
+            <div className="flex bg-slate-100 border-b border-slate-200 p-1 shrink-0">
+              {[
+                { id: "timeline", label: "ประวัติการขาย", icon: Clock3 },
+                { id: "calls", label: "บันทึกการโทร", icon: Phone },
+                { id: "notes", label: "โน้ตย่อย", icon: MessageSquare },
+                { id: "files", label: "เอกสารแนบ", icon: FileText }
+              ].map(tab => (
+                <button
+                  key={tab.id}
+                  id={`details-tab-btn-${tab.id}`}
+                  onClick={() => setActiveTab(tab.id as any)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${activeTab === tab.id ? "bg-white text-blue-600 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
+                >
+                  <tab.icon className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">{tab.label}</span>
+                </button>
+              ))}
+            </div>
+
+            {/* Tab Body Contents */}
+            <div className="p-4 flex-1 overflow-y-auto max-h-[460px] text-xs">
+              
+              {/* TAB 1: Chronological Timeline */}
+              {activeTab === "timeline" && (
+                <div id="tab-content-timeline" className="space-y-4">
+                  <div className="flex justify-between items-center mb-1">
+                    <span className="font-bold text-slate-800">ไทม์ไลน์บันทึกขั้นตอนการติดต่อ</span>
+                    <span className="text-[10px] bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-bold">ล่าสุด</span>
+                  </div>
+
+                  <div className="relative pl-4 border-l-2 border-slate-200 space-y-4 ml-2">
+                    {(lead.timeline || []).slice().reverse().map(item => (
+                      <div key={item.id} className="relative">
+                        {/* Dot indicator */}
+                        <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full bg-blue-600 border-2 border-white" />
+                        
+                        <div className="space-y-0.5">
+                          <span className="text-[10px] text-gray-400 font-mono block">
+                            {new Date(item.date).toLocaleDateString("th-TH")} | {new Date(item.date).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                          <h4 className="font-bold text-gray-800 leading-tight">{item.title}</h4>
+                          <p className="text-[11px] text-gray-500 mt-0.5">{item.description}</p>
+                        </div>
+                      </div>
+                    ))}
+                    {(lead.timeline || []).length === 0 && (
+                      <div className="py-12 text-center text-gray-400">ยังไม่มีประวัติบันทึกในไทม์ไลน์</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 2: Phone Call Recording Outcomes logger */}
+              {activeTab === "calls" && (
+                <div id="tab-content-calls" className="space-y-4">
+                  <div className="bg-white p-3.5 rounded-xl border border-gray-200 space-y-3">
+                    <span className="font-bold text-gray-800 block">📞 รายงานผลการโทรศัพท์</span>
+                    
+                    <form onSubmit={submitCall} className="space-y-2.5">
+                      <div className="flex items-center gap-4">
+                        <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-gray-700">
+                          <input 
+                            id="call-answered-yes"
+                            type="radio" 
+                            checked={callAnswered === true} 
+                            onChange={() => setCallAnswered(true)} 
+                          />
+                          รับสาย
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer font-semibold text-gray-700">
+                          <input 
+                            id="call-answered-no"
+                            type="radio" 
+                            checked={callAnswered === false} 
+                            onChange={() => setCallAnswered(false)} 
+                          />
+                          ไม่รับสาย / ติดต่อไม่ได้
+                        </label>
+                      </div>
+
+                      {callAnswered && (
+                        <div className="space-y-1">
+                          <label className="text-gray-400 text-[10px] block">คะแนนความสนใจจากเสียงสนทนา</label>
+                          <div className="flex gap-1">
+                            {[1, 2, 3, 4, 5].map(star => (
+                              <button 
+                                key={star} 
+                                id={`call-star-${star}`}
+                                type="button" 
+                                onClick={() => setCallInterest(star)}
+                                className="p-0.5"
+                              >
+                                <Star className={`w-5 h-5 ${star <= callInterest ? "text-amber-400 fill-amber-400" : "text-gray-200"}`} />
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="col-span-2">
+                          <label className="text-gray-400 text-[10px] block mb-0.5">สรุปผลการพูดคุย (Note การโทร)</label>
+                          <textarea
+                            id="call-notes-textarea"
+                            rows={2}
+                            placeholder={callAnswered ? "ลูกค้าตอบรับว่าอย่างไรบ้าง..." : "เช่น โทรแล้วตัดสาย หรือไม่มีผู้รับสาย..."}
+                            value={callNotes}
+                            onChange={(e) => setCallNotes(e.target.value)}
+                            className="w-full bg-slate-50 border p-2 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                          />
+                        </div>
+                        
+                        <div className="col-span-2 space-y-2">
+                          <div>
+                            <label className="text-gray-400 text-[10px] block mb-0.5 font-bold">นัดโทรอีกครั้ง</label>
+                            <select
+                              id="call-followup-days-select"
+                              value={callFollowDays}
+                              onChange={(e) => setCallFollowDays(e.target.value)}
+                              className="w-full bg-slate-50 border p-2 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            >
+                              <option value="1">พรุ่งนี้ (1 วัน)</option>
+                              <option value="3">3 วันถัดไป</option>
+                              <option value="7">สัปดาห์หน้า (7 วัน)</option>
+                              <option value="30">เดือนหน้า (30 วัน)</option>
+                              <option value="custom">ระบุวันที่เอง (กำหนดเอง)</option>
+                              <option value="0">ไม่ต้องตั้งติดตามใหม่</option>
+                            </select>
+                          </div>
+
+                          {callFollowDays === "custom" && (
+                            <div className="animate-in fade-in slide-in-from-top-1 duration-200">
+                              <label className="text-gray-400 text-[10px] block mb-0.5 font-bold">เลือกวันที่ติดต่อกลับ</label>
+                              <input
+                                id="call-custom-date-input"
+                                type="date"
+                                required
+                                value={customCallDate}
+                                onChange={(e) => setCustomCallDate(e.target.value)}
+                                min={new Date().toISOString().split("T")[0]}
+                                className="w-full bg-slate-50 border p-2 rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      <button
+                        id="submit-call-log-btn"
+                        type="submit"
+                        className="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold p-2 rounded transition-colors cursor-pointer text-center"
+                      >
+                        บันทึกสายสนทนา
+                      </button>
+                    </form>
+                  </div>
+
+                  {/* Previous call list */}
+                  <div className="space-y-2 pt-2">
+                    <span className="font-bold text-gray-700 block text-[10px] uppercase">ประวัติการโทรครั้งก่อน</span>
+                    {(lead.calls || []).slice().reverse().map(c => (
+                      <div key={c.id} className="bg-white p-2.5 rounded-lg border border-gray-100 flex justify-between items-start">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className={`w-2 h-2 rounded-full ${c.answered ? "bg-emerald-500" : "bg-rose-500"}`} />
+                            <span className="font-semibold text-gray-800">{c.answered ? "รับสาย" : "ไม่รับสาย"}</span>
+                            {c.answered && <span className="text-[10px] text-amber-500">{"⭐".repeat(c.interestLevel)}</span>}
+                          </div>
+                          <p className="text-[11px] text-gray-600">{c.notes}</p>
+                          <span className="text-[9px] text-gray-400 font-mono block">{new Date(c.date).toLocaleDateString("th-TH")}</span>
+                        </div>
+                        {c.nextFollowUpInDays && c.nextFollowUpInDays > 0 && (
+                          <span className="text-[9px] bg-amber-50 border border-amber-200 text-amber-800 px-1.5 py-0.5 rounded shrink-0">นัด {c.nextFollowUpInDays} วัน</span>
+                        )}
+                      </div>
+                    ))}
+                    {(lead.calls || []).length === 0 && (
+                      <div className="py-6 text-center text-gray-400 text-xs">ยังไม่มีบันทึกข้อมูลสายโทรเข้าออก</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 3: Continuous note logging */}
+              {activeTab === "notes" && (
+                <div id="tab-content-notes" className="space-y-4">
+                  <div className="bg-white p-3 rounded-xl border border-gray-200">
+                    <form onSubmit={submitNote} className="space-y-2">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-gray-800">📝 เขียนบันทึกช่วยจำ</span>
+                        <select 
+                          id="note-author-select"
+                          value={noteAuthor} 
+                          onChange={(e) => setNoteAuthor(e.target.value)}
+                          className="bg-gray-50 border rounded px-1.5 py-0.5 text-[10px] text-gray-600"
+                        >
+                          <option value="เซลส์สมชาย">สมชาย</option>
+                          <option value="เซลส์วิภา">วิภา</option>
+                          <option value="เซลส์ณพล">ณพล</option>
+                        </select>
+                      </div>
+                      
+                      <div className="relative">
+                        <textarea
+                          id="new-note-text"
+                          rows={3}
+                          placeholder="พิมพ์ข้อความบันทึกช่วยจำสำหรับแชร์ในทีม... เช่น 'ลูกค้าชอบคุยทางโทรศัพท์มากกว่า Line'"
+                          value={noteText}
+                          onChange={(e) => setNoteText(e.target.value)}
+                          className="w-full bg-slate-50 border p-2 rounded focus:outline-none text-xs"
+                        />
+                        <button
+                          id="submit-new-note-btn"
+                          type="submit"
+                          className="absolute right-2 bottom-3 p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors cursor-pointer"
+                        >
+                          <Send className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+
+                  {/* Notes Feed */}
+                  <div className="space-y-2.5">
+                    {(lead.notes || []).slice().reverse().map(note => (
+                      <div key={note.id} className="bg-white p-3 rounded-xl border border-gray-100 space-y-1 shadow-2xs">
+                        <div className="flex justify-between items-center text-[10px] text-gray-400">
+                          <span className="font-bold text-indigo-700">{note.author}</span>
+                          <span className="font-mono">
+                            {new Date(note.createdAt).toLocaleDateString("th-TH")} {new Date(note.createdAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}
+                          </span>
+                        </div>
+                        <p className="text-[11px] text-gray-700 leading-relaxed font-medium">{note.text}</p>
+                      </div>
+                    ))}
+                    {(lead.notes || []).length === 0 && (
+                      <div className="py-12 text-center text-gray-400">ยังไม่มีบันทึกข้อความเสริมเขียนเก็บไว้</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* TAB 4: CRM Files storage simulator */}
+              {activeTab === "files" && (
+                <div id="tab-content-files" className="space-y-4">
+                  <div className="bg-white p-3.5 rounded-xl border border-gray-200">
+                    <span className="font-bold text-gray-800 block mb-2">📁 แนบไฟล์ประกอบการยื่นเอกสาร</span>
+                    
+                    <form onSubmit={submitFile} className="space-y-2.5">
+                      <div>
+                        <label className="text-gray-400 text-[10px] block mb-0.5">ชื่อเอกสารหรือไฟล์ภาพ</label>
+                        <input
+                          id="new-file-name-input"
+                          type="text"
+                          required
+                          placeholder="เช่น สำเนาบัญชีธนาคารกสิกร_แบรนด์บิวตี้.jpg"
+                          value={fileName}
+                          onChange={(e) => setFileName(e.target.value)}
+                          className="w-full bg-slate-50 border p-2 rounded focus:outline-none"
+                        />
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-gray-400 text-[10px] block mb-0.5">ประเภทของไฟล์</label>
+                          <select
+                            id="new-file-type-select"
+                            value={fileType}
+                            onChange={(e) => setFileType(e.target.value as any)}
+                            className="w-full bg-slate-50 border p-2 rounded focus:outline-none"
+                          >
+                            <option value="image">รูปภาพ (.jpg, .png)</option>
+                            <option value="pdf">เอกสาร PDF (.pdf)</option>
+                            <option value="other">อื่น ๆ (.xlsx, .zip)</option>
+                          </select>
+                        </div>
+                        <div className="flex items-end">
+                          <button
+                            id="submit-file-upload-btn"
+                            type="submit"
+                            className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold p-2 rounded transition-all cursor-pointer flex items-center justify-center gap-1"
+                          >
+                            <UploadCloud className="w-3.5 h-3.5" /> จำลองอัปโหลด
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  </div>
+
+                  {/* List of files */}
+                  <div className="space-y-2">
+                    <span className="font-bold text-gray-700 block text-[10px] uppercase">รายการไฟล์แนบทั้งหมด</span>
+                    {(lead.files || []).slice().reverse().map(f => (
+                      <div key={f.id} className="bg-white p-2.5 rounded-lg border border-gray-100 flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <FileText className="w-4 h-4 text-indigo-500" />
+                          <div>
+                            <span className="font-bold block text-gray-800 text-[11px] truncate max-w-[180px]">{f.name}</span>
+                            <span className="text-[9px] text-gray-400 font-mono">{f.size} | {new Date(f.uploadedAt).toLocaleDateString("th-TH")}</span>
+                          </div>
+                        </div>
+                        <span className="text-[10px] text-indigo-600 hover:underline cursor-pointer">ดาวน์โหลด</span>
+                      </div>
+                    ))}
+                    {(lead.files || []).length === 0 && (
+                      <div className="py-8 text-center text-gray-400 text-xs flex flex-col items-center justify-center gap-1">
+                        <UploadCloud className="w-6 h-6 text-gray-300" />
+                        <span>ยังไม่มีไฟล์ประกอบ อัปโหลดเพื่อบันทึกร่วม</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
+
+        </div>
+
+        {/* Modal Footer actions */}
+        <div className="border-t border-gray-100 pt-3 flex justify-between items-center text-xs text-gray-500">
+          <span>รหัสระบบของลูกค้า: <span className="font-mono font-bold text-gray-700">{lead.id}</span></span>
+          <button 
+            id="details-close-btn"
+            onClick={onClose} 
+            className="px-5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg font-bold transition-all cursor-pointer shadow-xs"
+          >
+            ปิดหน้าจอนี้
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}

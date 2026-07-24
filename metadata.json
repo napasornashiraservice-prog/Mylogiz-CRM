@@ -1,0 +1,6 @@
+{
+  "name": "Mylogiz Sales CRM",
+  "description": "ระบบจัดการลูกค้าเป้าหมาย (Lead Management) และ Sales CRM ออกแบบเฉพาะสำหรับธุรกิจขนส่ง Mylogiz ติดตามทุกขั้นตอนการขาย วิเคราะห์ข้อมูล และอัปเดตแบบเรียลไทม์",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

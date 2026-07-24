@@ -1,0 +1,13 @@
+{
+  "leads": [],
+  "sheetsConfig": {
+    "sheetUrl": "",
+    "isEnabled": false,
+    "lastSyncedAt": null
+  },
+  "salespersons": [
+    "Phere",
+    "Nalin",
+    "Beer"
+  ]
+}
