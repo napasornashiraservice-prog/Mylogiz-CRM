@@ -1,6 +1,6 @@
 import React from "react";
 import { Lead, LeadStatus } from "../types";
-import { BarChart3, TrendingUp, Users, Award, Flame, Target, MessageSquare, ShoppingBag } from "lucide-react";
+import { BarChart3, TrendingUp, Users, Award, Flame, Target, MessageSquare, ShoppingBag, Megaphone } from "lucide-react";
 import { motion } from "motion/react";
 
 interface ReportsViewProps {
@@ -51,6 +51,22 @@ export default function ReportsView({ leads, salespersons = [], currentUser = nu
       registered: chanRegistered,
       conversion
     };
+  }).sort((a, b) => b.leads - a.leads);
+
+  // Campaign analytics
+  const campaignMap: Record<string, { leads: number; registered: number }> = {};
+  leads.forEach(l => {
+    const cName = l.campaign || "ไม่ได้ระบุแคมเปญ";
+    if (!campaignMap[cName]) campaignMap[cName] = { leads: 0, registered: 0 };
+    campaignMap[cName].leads += 1;
+    if (l.status === LeadStatus.REGISTERED || l.status === LeadStatus.ACTIVATED || l.status === LeadStatus.REGULAR) {
+      campaignMap[cName].registered += 1;
+    }
+  });
+
+  const campaignData = Object.entries(campaignMap).map(([name, stat]) => {
+    const conversion = stat.leads > 0 ? Math.round((stat.registered / stat.leads) * 100) : 0;
+    return { name, ...stat, conversion };
   }).sort((a, b) => b.leads - a.leads);
 
   // Find best performing channel by conversion (with at least 1 lead)

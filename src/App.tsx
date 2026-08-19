@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from "react";
 import { Lead, LeadStatus, TimelineItem } from "./types";
+import { generateNextCustomerCode } from "./utils/codeGenerator";
 import DashboardView from "./components/DashboardView";
 import LeadsView from "./components/LeadsView";
 import FollowUpView from "./components/FollowUpView";
@@ -18,11 +19,27 @@ import {
 } from "lucide-react";
 import { motion } from "motion/react";
 import { db } from "./firebase";
-import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch } from "firebase/firestore";
+import { collection, doc, onSnapshot, setDoc, updateDoc, writeBatch, deleteDoc } from "firebase/firestore";
+
+function cleanFirestorePayload<T>(data: T): T {
+  if (data === null || data === undefined) return "" as any;
+  if (typeof data !== "object") return data;
+  if (Array.isArray(data)) {
+    return data.map(cleanFirestorePayload) as any;
+  }
+  const cleaned: any = {};
+  for (const [key, val] of Object.entries(data)) {
+    if (val !== undefined) {
+      cleaned[key] = cleanFirestorePayload(val);
+    }
+  }
+  return cleaned;
+}
 
 export default function App() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [salespersons, setSalespersons] = useState<string[]>([]);
+  const [campaigns, setCampaigns] = useState<string[]>([]);
   const [currentUser, setCurrentUser] = useState<string | null>(() => {
     return localStorage.getItem("crm_current_user");
   });
@@ -49,17 +66,31 @@ export default function App() {
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pheresFilterMode, setPheresFilterMode] = useState<"all" | "own">("all");
+  const [userPasswords, setUserPasswords] = useState<Record<string, string>>({});
   const [sheetsConfig, setSheetsConfig] = useState<{
     sheetUrl: string;
     sheetName?: string;
+    webAppUrl?: string;
     isEnabled: boolean;
     lastSyncedAt: string | null;
   }>({
     sheetUrl: "https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKv19An905yF926dfgN1_aWf62kbI/edit",
     sheetName: "Mylogiz_CRM_Sync",
+    webAppUrl: "",
     isEnabled: true,
     lastSyncedAt: null
   });
+
+  const handleUpdatePassword = async (salespersonName: string, newPass: string) => {
+    try {
+      const updatedMap = { ...userPasswords, [salespersonName]: newPass };
+      await setDoc(doc(db, "config", "user_passwords"), { passwords: updatedMap });
+      return true;
+    } catch (err) {
+      console.error("Failed to update user password", err);
+    }
+    return false;
+  };
 
   const handleUpdateSalespersons = async (newSalespersons: string[]) => {
     try {
@@ -69,6 +100,28 @@ export default function App() {
       console.error("Failed to update salespersons", err);
     }
     return false;
+  };
+
+  const handleAddCampaign = async (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed || campaigns.includes(trimmed)) return;
+    const updated = [...campaigns, trimmed];
+    setCampaigns(updated);
+    try {
+      await setDoc(doc(db, "config", "campaigns"), { list: updated });
+    } catch (err) {
+      console.error("Failed to add campaign", err);
+    }
+  };
+
+  const handleDeleteCampaign = async (name: string) => {
+    const updated = campaigns.filter(c => c !== name);
+    setCampaigns(updated);
+    try {
+      await setDoc(doc(db, "config", "campaigns"), { list: updated });
+    } catch (err) {
+      console.error("Failed to delete campaign", err);
+    }
   };
 
   const handleRenameSalesperson = async (oldName: string, newName: string) => {
@@ -154,6 +207,11 @@ export default function App() {
         // Sort newest first by default in memory
         leadsList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
         setLeads(leadsList);
+        setSelectedLead((prev) => {
+          if (!prev) return null;
+          const found = leadsList.find((l) => l.id === prev.id);
+          return found || prev;
+        });
         setLoading(false);
         setIsRefreshing(false);
       },
@@ -201,10 +259,50 @@ export default function App() {
       }
     );
 
+    // 4. Listen to user_passwords document
+    const unsubscribePasswords = onSnapshot(
+      doc(db, "config", "user_passwords"),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          setUserPasswords(snapshot.data().passwords || {});
+        } else {
+          setDoc(doc(db, "config", "user_passwords"), { passwords: {} });
+        }
+      },
+      (err) => {
+        console.error("User passwords listener error:", err);
+      }
+    );
+
+    // 5. Listen to campaigns list document
+    const DEFAULT_CAMPAIGNS = [
+      "แคมเปญ 8.8 Sales Shock",
+      "แคมเปญ TikTok Live",
+      "แคมเปญ Facebook Ads",
+      "แคมเปญ Google Search",
+      "แคมเปญลูกค้าเก่าแนะนำ",
+      "แคมเปญออกบูธ/สัมมนา"
+    ];
+    const unsubscribeCampaigns = onSnapshot(
+      doc(db, "config", "campaigns"),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          setCampaigns(snapshot.data().list || DEFAULT_CAMPAIGNS);
+        } else {
+          setDoc(doc(db, "config", "campaigns"), { list: DEFAULT_CAMPAIGNS });
+        }
+      },
+      (err) => {
+        console.error("Campaigns listener error:", err);
+      }
+    );
+
     return () => {
       unsubscribeLeads();
       unsubscribeSp();
       unsubscribeSheets();
+      unsubscribePasswords();
+      unsubscribeCampaigns();
     };
   }, []);
 
@@ -259,7 +357,8 @@ export default function App() {
         documents: leadData.documents || { idCard: false, bookBank: false, companyReg: false, taxDoc: false, storefrontPhoto: false }
       };
 
-      await setDoc(doc(db, "leads", id), newLead);
+      const cleanedLead = cleanFirestorePayload(newLead);
+      await setDoc(doc(db, "leads", id), cleanedLead);
     } catch (err: any) {
       console.error(err);
       setErrorMsg("เกิดข้อผิดพลาดในการบันทึก Lead ใหม่ไปยัง Cloud Firestore");
@@ -302,7 +401,7 @@ export default function App() {
         if (newStatus === LeadStatus.ACTIVATED && !lead.activationDate) {
           activationDate = new Date().toISOString().split("T")[0];
           if (!lead.customerCode) {
-            customerCode = `MLZ-${Math.floor(1000 + Math.random() * 9000)}`;
+            customerCode = generateNextCustomerCode(leads);
           }
           timeline.push({
             id: `id_${Math.random().toString(36).substring(2, 11)}`,
@@ -377,7 +476,7 @@ export default function App() {
         if (updatedLead.status === LeadStatus.ACTIVATED && !existingLead.activationDate) {
           activationDate = new Date().toISOString().split("T")[0];
           if (!updatedLead.customerCode) {
-            customerCode = `MLZ-${Math.floor(1000 + Math.random() * 9000)}`;
+            customerCode = generateNextCustomerCode(leads);
           }
           timeline.push({
             id: `id_${Math.random().toString(36).substring(2, 11)}`,
@@ -410,10 +509,28 @@ export default function App() {
       if (customerCode !== null) finalLead.customerCode = customerCode;
       if (firstShipmentDate !== null) finalLead.firstShipmentDate = firstShipmentDate;
 
-      await setDoc(doc(db, "leads", updatedLead.id), finalLead);
+      const cleanedFinalLead = cleanFirestorePayload(finalLead);
+      setSelectedLead(cleanedFinalLead);
+      await setDoc(doc(db, "leads", updatedLead.id), cleanedFinalLead);
     } catch (err: any) {
       console.error(err);
       setErrorMsg("ไม่สามารถเซฟข้อมูลการอัปเดตลงคลาวด์ได้");
+    }
+  };
+
+  // 3.5. DELETE LEAD
+  const handleDeleteLead = async (leadId: string): Promise<boolean> => {
+    setErrorMsg(null);
+    try {
+      await deleteDoc(doc(db, "leads", leadId));
+      if (selectedLead && selectedLead.id === leadId) {
+        setSelectedLead(null);
+      }
+      return true;
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg("ไม่สามารถลบข้อมูล Lead ออกจากระบบคลาวด์ได้");
+      return false;
     }
   };
 
@@ -604,11 +721,12 @@ export default function App() {
     }
   };
 
-  const handleUpdateSheetsConfig = async (sheetUrl: string, sheetName: string, isEnabled: boolean) => {
+  const handleUpdateSheetsConfig = async (sheetUrl: string, sheetName: string, isEnabled: boolean, webAppUrl?: string) => {
     try {
       const updatedConfig = {
         sheetUrl,
         sheetName,
+        webAppUrl: webAppUrl !== undefined ? webAppUrl : (sheetsConfig.webAppUrl || ""),
         isEnabled,
         lastSyncedAt: sheetsConfig.lastSyncedAt
       };
@@ -657,17 +775,21 @@ export default function App() {
   const renderActiveView = () => {
     switch (activeTab) {
       case "dashboard":
-        return <DashboardView leads={displayedLeads} onNavigate={handleNavigate} onSelectLead={setSelectedLead} />;
+        return <DashboardView leads={displayedLeads} onNavigate={handleNavigate} onSelectLead={setSelectedLead} onUpdateLead={handleUpdateLead} />;
       case "leads":
         return (
           <LeadsView 
             leads={displayedLeads} 
             salespersons={salespersons}
+            campaigns={campaigns}
+            onAddCampaign={handleAddCampaign}
+            onDeleteCampaign={handleDeleteCampaign}
             currentUser={currentUser}
             onAddLead={handleAddLead} 
             onUpdateLeadStatus={handleUpdateLeadStatus} 
             onSelectLead={setSelectedLead} 
             onUpdateLead={handleUpdateLead}
+            onDeleteLead={handleDeleteLead}
           />
         );
       case "followup":
@@ -691,9 +813,15 @@ export default function App() {
        case "settings":
         return (
           <SettingsView 
+            leads={displayedLeads}
             leadsCount={displayedLeads.length} 
             salespersons={salespersons}
+            campaigns={campaigns}
+            onAddCampaign={handleAddCampaign}
+            onDeleteCampaign={handleDeleteCampaign}
             currentUser={currentUser}
+            userPasswords={userPasswords}
+            onUpdatePassword={handleUpdatePassword}
             sheetsConfig={sheetsConfig}
             onUpdateSalespersons={handleUpdateSalespersons}
             onRenameSelf={handleRenameSelf}
@@ -708,7 +836,15 @@ export default function App() {
   };
 
   if (!currentUser) {
-    return <LoginView salespersons={salespersons} onLogin={handleLogin} loading={loading} />;
+    return (
+      <LoginView 
+        salespersons={salespersons} 
+        userPasswords={userPasswords} 
+        onLogin={handleLogin} 
+        onUpdatePassword={handleUpdatePassword}
+        loading={loading} 
+      />
+    );
   }
 
   return (
@@ -997,9 +1133,13 @@ export default function App() {
         <LeadDetailsModal 
           lead={selectedLead} 
           salespersons={salespersons}
+          campaigns={campaigns}
+          onAddCampaign={handleAddCampaign}
+          onDeleteCampaign={handleDeleteCampaign}
           currentUser={currentUser}
           onClose={() => setSelectedLead(null)} 
           onUpdateLead={handleUpdateLead}
+          onDeleteLead={handleDeleteLead}
           onAddNote={handleAddNote}
           onAddCall={handleAddCall}
           onAddFile={handleAddFile}

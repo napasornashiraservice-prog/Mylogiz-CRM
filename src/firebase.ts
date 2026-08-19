@@ -16,5 +16,5 @@ const app = initializeApp(firebaseConfig);
 // Initialize Firestore with the custom database ID provided by AI Studio
 const databaseId = "ai-studio-mylogizsalescrm-af80fbab-c71c-4207-ae87-dcd1d8388c60";
 export const db = databaseId 
-  ? initializeFirestore(app, {}, databaseId)
+  ? initializeFirestore(app, { ignoreUndefinedProperties: true }, databaseId)
   : getFirestore(app);

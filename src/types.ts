@@ -5,8 +5,8 @@
 export enum LeadStatus {
   NEW_LEAD = "new_lead",          // 🟡 Lead ใหม่
   CONTACTED = "contacted",        // 🟠 ติดต่อแล้ว
-  MEETING = "meeting",            // 📅 นัด Meeting
   SENT_DETAILS = "sent_details",  // 🔵 ส่งรายละเอียด
+  MEETING = "meeting",            // 📅 นัด Meeting
   WAITING_DOCS = "waiting_docs",  // 🟣 รอเอกสาร
   REGISTERED = "registered",      // 🟢 สมัครแล้ว
   ACTIVATED = "activated",        // ✅ เปิดใช้งานแล้ว
@@ -19,8 +19,8 @@ export enum LeadStatus {
 export const StatusLabels: Record<LeadStatus, string> = {
   [LeadStatus.NEW_LEAD]: "🟡 Lead ใหม่",
   [LeadStatus.CONTACTED]: "🟠 ติดต่อแล้ว",
-  [LeadStatus.MEETING]: "📅 นัด Meeting",
   [LeadStatus.SENT_DETAILS]: "🔵 ส่งรายละเอียด",
+  [LeadStatus.MEETING]: "📅 นัด Meeting",
   [LeadStatus.WAITING_DOCS]: "🟣 รอเอกสาร",
   [LeadStatus.REGISTERED]: "🟢 สมัครแล้ว",
   [LeadStatus.ACTIVATED]: "✅ เปิดใช้งานแล้ว",
@@ -33,8 +33,8 @@ export const StatusLabels: Record<LeadStatus, string> = {
 export const StatusColors: Record<LeadStatus, string> = {
   [LeadStatus.NEW_LEAD]: "bg-amber-100 text-amber-800 border-amber-300 font-medium",
   [LeadStatus.CONTACTED]: "bg-orange-100 text-orange-800 border-orange-300 font-medium",
-  [LeadStatus.MEETING]: "bg-indigo-100 text-indigo-800 border-indigo-300 font-medium",
   [LeadStatus.SENT_DETAILS]: "bg-blue-100 text-blue-800 border-blue-300 font-medium",
+  [LeadStatus.MEETING]: "bg-indigo-100 text-indigo-800 border-indigo-300 font-medium",
   [LeadStatus.WAITING_DOCS]: "bg-purple-100 text-purple-800 border-purple-300 font-medium",
   [LeadStatus.REGISTERED]: "bg-green-100 text-green-800 border-green-300 font-medium",
   [LeadStatus.ACTIVATED]: "bg-emerald-100 text-emerald-800 border-emerald-300 font-medium",
@@ -63,6 +63,7 @@ export interface FollowUp {
   date: string; // YYYY-MM-DD
   time: string; // HH:MM
   isCompleted: boolean;
+  note?: string; // หมายเหตุการติดตาม
 }
 
 export interface Documents {
@@ -117,6 +118,7 @@ export interface Lead {
   createdAt: string;           // วันที่เพิ่ม Lead
   updatedAt: string;           // อัปเดตล่าสุด
   customerType?: "individual" | "corporate"; // ประเภทลูกค้า: บุคคลธรรมดา หรือ นิติบุคคล
+  campaign?: string;           // แคมเปญการตลาดที่ลูกค้าเข้ามา
   
   // ฟิลด์พิเศษเมื่อสมัคร/เปิดใช้งานแล้ว (Registered/Activated)
   customerCode?: string;       // รหัสลูกค้า
@@ -144,6 +146,7 @@ export interface CRMStore {
     lastSyncedAt: string | null;
   };
   salespersons?: string[];
+  campaigns?: string[];
 }
 
 export const THAI_PROVINCES = [

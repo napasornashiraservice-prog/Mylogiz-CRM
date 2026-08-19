@@ -5,29 +5,49 @@ import {
   Plus, Trash2, FileText, UploadCloud, MessageSquare, ClipboardCheck, 
   Clock3, ShieldCheck, HelpCircle, Package, Send, Copy, Check,
   Image as ImageIcon, Eye, Download, Loader2, Paperclip,
-  Sparkles, TrendingUp, CheckCircle2, AlertTriangle, Lightbulb, Zap
+  Sparkles, TrendingUp, CheckCircle2, AlertTriangle, Lightbulb, Zap, ShieldAlert,
+  Megaphone, Pencil, Share2
 } from "lucide-react";
 import { motion } from "motion/react";
+import CampaignManagerModal from "./CampaignManagerModal";
 
 interface LeadDetailsModalProps {
   lead: Lead;
   salespersons?: string[];
+  campaigns?: string[];
+  onAddCampaign?: (name: string) => Promise<void>;
+  onDeleteCampaign?: (name: string) => Promise<void>;
   currentUser?: string | null;
   onClose: () => void;
   onUpdateLead: (updatedLead: Lead) => void;
   onAddNote: (leadId: string, text: string, author: string) => void;
   onAddCall: (leadId: string, answered: boolean, interestLevel: number, notes: string, nextFollowUpInDays?: number, customFollowUpDate?: string) => void;
   onAddFile: (leadId: string, name: string, size: string, type: "image" | "pdf" | "other", url?: string) => void;
+  onDeleteLead?: (leadId: string) => Promise<boolean> | void;
 }
 
 const ALL_STATUSES = Object.values(LeadStatus);
 const PROVINCES = THAI_PROVINCES;
+const ALL_CHANNELS = ["Facebook", "TikTok", "Website", "Line OA", "โทรเข้า", "คนแนะนำ", "หาเอง", "Shopee", "Lazada", "Instagram", "อื่นๆ"];
 
 
 export default function LeadDetailsModal({ 
-  lead, salespersons = ["Phere", "Nalin", "Beer"], currentUser = null, onClose, onUpdateLead, onAddNote, onAddCall, onAddFile 
+  lead, 
+  salespersons = ["Phere", "Nalin", "Beer"], 
+  campaigns = [],
+  onAddCampaign,
+  onDeleteCampaign,
+  currentUser = null, 
+  onClose, 
+  onUpdateLead, 
+  onDeleteLead, 
+  onAddNote, 
+  onAddCall, 
+  onAddFile 
 }: LeadDetailsModalProps) {
   const [activeTab, setActiveTab] = useState<"timeline" | "calls" | "notes" | "files" | "ai">("timeline");
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [isDeletingLead, setIsDeletingLead] = useState(false);
   
   // AI Customer Analysis state
   const [aiAnalysis, setAiAnalysis] = useState<{
@@ -68,17 +88,21 @@ export default function LeadDetailsModal({
   
   // Edit state
   const [isEditing, setIsEditing] = useState(false);
-  const [editShopName, setEditShopName] = useState(lead.shopName);
-  const [editContactName, setEditContactName] = useState(lead.contactName);
-  const [editPhone, setEditPhone] = useState(lead.phone);
-  const [editLineId, setEditLineId] = useState(lead.lineId);
-  const [editFacebook, setEditFacebook] = useState(lead.facebook);
-  const [editProvince, setEditProvince] = useState(lead.province);
-  const [editAddress, setEditAddress] = useState(lead.address);
-  const [editShipments, setEditShipments] = useState(lead.shipmentsPerDay);
-  const [editCompetitor, setEditCompetitor] = useState(lead.competitor);
-  const [editScore, setEditScore] = useState(lead.score);
-  const [editSalesperson, setEditSalesperson] = useState(lead.salesPerson);
+  const [isQuickEditingChannel, setIsQuickEditingChannel] = useState(false);
+  const [showCampaignManagerModal, setShowCampaignManagerModal] = useState(false);
+  const [editShopName, setEditShopName] = useState(lead.shopName || "");
+  const [editContactName, setEditContactName] = useState(lead.contactName || "");
+  const [editPhone, setEditPhone] = useState(lead.phone || "");
+  const [editLineId, setEditLineId] = useState(lead.lineId || "");
+  const [editFacebook, setEditFacebook] = useState(lead.facebook || "");
+  const [editProvince, setEditProvince] = useState(lead.province || "กรุงเทพมหานคร");
+  const [editChannel, setEditChannel] = useState(lead.channel || "Facebook");
+  const [editCampaign, setEditCampaign] = useState(lead.campaign || "");
+  const [editAddress, setEditAddress] = useState(lead.address || "");
+  const [editShipments, setEditShipments] = useState(lead.shipmentsPerDay || 0);
+  const [editCompetitor, setEditCompetitor] = useState(lead.competitor || "");
+  const [editScore, setEditScore] = useState(lead.score || 3);
+  const [editSalesperson, setEditSalesperson] = useState(lead.salesPerson || "");
   const [editTransport, setEditTransport] = useState<string[]>(lead.preferredTransport || []);
   const [editCustomerType, setEditCustomerType] = useState<"individual" | "corporate">(lead.customerType || "individual");
   
@@ -86,6 +110,50 @@ export default function LeadDetailsModal({
   const [editCustomerCode, setEditCustomerCode] = useState(lead.customerCode || "");
   const [editRatePlan, setEditRatePlan] = useState(lead.ratePlan || "");
   const [editPaymentType, setEditPaymentType] = useState(lead.paymentType || "เติมเงิน");
+
+  // Follow-up setting state
+  const [followUpDate, setFollowUpDate] = useState(lead.followUp?.date || "");
+  const [followUpTime, setFollowUpTime] = useState(lead.followUp?.time || "10:00");
+  const [followUpCompleted, setFollowUpCompleted] = useState(lead.followUp?.isCompleted || false);
+  const [followUpNote, setFollowUpNote] = useState(lead.followUp?.note || "");
+  const [isSavingFollowUp, setIsSavingFollowUp] = useState(false);
+  const [saveFollowUpSuccess, setSaveFollowUpSuccess] = useState(false);
+
+  // Sync state when lead prop updates
+  React.useEffect(() => {
+    setEditShopName(lead.shopName || "");
+    setEditContactName(lead.contactName || "");
+    setEditPhone(lead.phone || "");
+    setEditLineId(lead.lineId || "");
+    setEditFacebook(lead.facebook || "");
+    setEditProvince(lead.province || "กรุงเทพมหานคร");
+    setEditChannel(lead.channel || "Facebook");
+    setEditCampaign(lead.campaign || "");
+    setEditAddress(lead.address || "");
+    setEditShipments(lead.shipmentsPerDay || 0);
+    setEditCompetitor(lead.competitor || "");
+    setEditScore(lead.score || 3);
+    setEditSalesperson(lead.salesPerson || "");
+    setEditTransport(lead.preferredTransport || []);
+    setEditCustomerType(lead.customerType || "individual");
+    setEditCustomerCode(lead.customerCode || "");
+    setEditRatePlan(lead.ratePlan || "");
+    setEditPaymentType(lead.paymentType || "เติมเงิน");
+    setFollowUpDate(lead.followUp?.date || "");
+    setFollowUpTime(lead.followUp?.time || "10:00");
+    setFollowUpCompleted(lead.followUp?.isCompleted || false);
+    setFollowUpNote(lead.followUp?.note || "");
+  }, [
+    lead.id, 
+    lead.updatedAt, 
+    lead.channel, 
+    lead.shopName, 
+    lead.status, 
+    lead.followUp?.date, 
+    lead.followUp?.time, 
+    lead.followUp?.isCompleted, 
+    lead.followUp?.note
+  ]);
 
   // Notes state
   const [noteText, setNoteText] = useState("");
@@ -154,11 +222,6 @@ export default function LeadDetailsModal({
     return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
   };
 
-  // Follow-up setting state
-  const [followUpDate, setFollowUpDate] = useState(lead.followUp?.date || "");
-  const [followUpTime, setFollowUpTime] = useState(lead.followUp?.time || "10:00");
-  const [followUpCompleted, setFollowUpCompleted] = useState(lead.followUp?.isCompleted || false);
-
   // Copy to clipboard state & helper
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
@@ -207,6 +270,15 @@ export default function LeadDetailsModal({
     ? (!docs.idCard || !docs.companyReg || !docs.taxDoc || !docs.storefrontPhoto)
     : (!docs.idCard || !docs.storefrontPhoto);
 
+  // Quick date helper
+  const handleSetQuickDate = (daysAhead: number) => {
+    const target = new Date();
+    target.setDate(target.getDate() + daysAhead);
+    const dateStr = target.toISOString().split("T")[0];
+    setFollowUpDate(dateStr);
+    setFollowUpCompleted(false);
+  };
+
   // Handle updates
   const handleSaveDetails = (e: React.FormEvent) => {
     e.preventDefault();
@@ -218,20 +290,23 @@ export default function LeadDetailsModal({
       lineId: editLineId,
       facebook: editFacebook,
       province: editProvince,
+      channel: editChannel.trim() || "Facebook",
       address: editAddress,
       shipmentsPerDay: Number(editShipments) || 0,
       competitor: editCompetitor,
       score: editScore,
       salesPerson: editSalesperson,
+      campaign: editCampaign ? editCampaign.trim() : "",
       preferredTransport: editTransport,
       customerType: editCustomerType,
-      customerCode: editCustomerCode || undefined,
-      ratePlan: editRatePlan || undefined,
-      paymentType: editPaymentType || undefined,
+      customerCode: editCustomerCode ? editCustomerCode.trim() : "",
+      ratePlan: editRatePlan ? editRatePlan.trim() : "",
+      paymentType: editPaymentType ? editPaymentType.trim() : "",
       followUp: {
         date: followUpDate,
         time: followUpTime,
-        isCompleted: followUpCompleted
+        isCompleted: followUpCompleted,
+        note: followUpNote ? followUpNote.trim() : ""
       }
     });
     setIsEditing(false);
@@ -255,15 +330,41 @@ export default function LeadDetailsModal({
     });
   };
 
-  const handleSaveFollowUpSettings = () => {
-    onUpdateLead({
-      ...lead,
-      followUp: {
-        date: followUpDate,
-        time: followUpTime,
-        isCompleted: followUpCompleted
-      }
-    });
+  const handleSaveFollowUpSettings = async () => {
+    if (!followUpDate) {
+      alert("กรุณาระบุหรือเลือกวันที่ต้องการโทรติดตามผล");
+      return;
+    }
+    setIsSavingFollowUp(true);
+    try {
+      const updatedTimeline = [...(lead.timeline || [])];
+      updatedTimeline.unshift({
+        id: `id_${Math.random().toString(36).substring(2, 11)}`,
+        title: "บันทึกแผนโทรติดตาม (Follow Up Plan)",
+        description: `นัดหมายโทรวันที่ ${followUpDate} เวลา ${followUpTime || "10:00"} น.${followUpNote ? ` (หมายเหตุ: ${followUpNote})` : ""} [${followUpCompleted ? "ทำเครื่องหมายเป็นโทรแล้ว" : "รอดำเนินการ"}]`,
+        date: new Date().toISOString(),
+        type: "call"
+      });
+
+      await onUpdateLead({
+        ...lead,
+        timeline: updatedTimeline,
+        followUp: {
+          date: followUpDate,
+          time: followUpTime || "10:00",
+          isCompleted: followUpCompleted,
+          note: followUpNote ? followUpNote.trim() : ""
+        }
+      });
+      setSaveFollowUpSuccess(true);
+      setTimeout(() => {
+        setSaveFollowUpSuccess(false);
+      }, 2500);
+    } catch (err) {
+      console.error("Failed to save follow up plan:", err);
+    } finally {
+      setIsSavingFollowUp(false);
+    }
   };
 
   const submitNote = (e: React.FormEvent) => {
@@ -377,7 +478,45 @@ export default function LeadDetailsModal({
                 <span>✨ AI วิเคราะห์</span>
               </button>
             </div>
-            <p className="text-xs text-slate-400">เซลส์ดูแล: <span className="font-semibold text-slate-700">{lead.salesPerson}</span> | ช่องทางเข้ามา: <span className="font-semibold text-slate-700">{lead.channel}</span> | ยอดส่ง: <span className="font-semibold text-blue-600">{lead.shipmentsPerDay} ชิ้น/เดือน</span></p>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
+              <p>เซลส์ดูแล: <span className="font-semibold text-slate-700">{lead.salesPerson || "-"}</span></p>
+              <span>•</span>
+              <div className="flex items-center gap-1.5">
+                <span>ช่องทางเข้ามา:</span>
+                {isQuickEditingChannel ? (
+                  <select
+                    id="header-quick-channel-select"
+                    value={lead.channel || "Facebook"}
+                    onChange={(e) => {
+                      const newCh = e.target.value;
+                      setEditChannel(newCh);
+                      onUpdateLead({ ...lead, channel: newCh });
+                      setIsQuickEditingChannel(false);
+                    }}
+                    onBlur={() => setIsQuickEditingChannel(false)}
+                    autoFocus
+                    className="bg-white border border-blue-400 text-blue-800 text-[11px] font-bold rounded px-1.5 py-0.5 shadow-xs focus:outline-none"
+                  >
+                    {ALL_CHANNELS.map(ch => (
+                      <option key={ch} value={ch}>{ch}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <button
+                    type="button"
+                    id="header-quick-channel-btn"
+                    onClick={() => setIsQuickEditingChannel(true)}
+                    className="inline-flex items-center gap-1 font-bold text-blue-600 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2 py-0.5 rounded text-[11px] transition-colors cursor-pointer"
+                    title="คลิกเพื่อเปลี่ยนช่องทางที่เข้ามา"
+                  >
+                    <span>{lead.channel || "Facebook"}</span>
+                    <Pencil className="w-2.5 h-2.5 opacity-60" />
+                  </button>
+                )}
+              </div>
+              <span>•</span>
+              <p>ยอดส่ง: <span className="font-semibold text-blue-600">{lead.shipmentsPerDay || 0} ชิ้น/เดือน</span></p>
+            </div>
           </div>
           <button 
             id="close-lead-details-modal-btn"
@@ -559,6 +698,19 @@ export default function LeadDetailsModal({
                       </select>
                     </div>
                     <div>
+                      <label className="text-gray-500 font-semibold block mb-0.5">ช่องทางที่เข้ามา (Channel)</label>
+                      <select 
+                        id="edit-channel"
+                        value={editChannel} 
+                        onChange={(e) => setEditChannel(e.target.value)} 
+                        className="w-full bg-slate-50 border p-2 rounded font-semibold text-slate-700"
+                      >
+                        {ALL_CHANNELS.map(ch => (
+                          <option key={ch} value={ch}>{ch}</option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
                       <label className="text-gray-500 font-semibold block mb-0.5">เซลส์ผู้ดูแล</label>
                       <select 
                         id="edit-salesperson"
@@ -569,6 +721,35 @@ export default function LeadDetailsModal({
                         {salespersons.map((sp) => (
                           <option key={sp} value={sp}>{sp}</option>
                         ))}
+                      </select>
+                    </div>
+                    <div>
+                      <div className="flex items-center justify-between mb-0.5">
+                        <label className="text-gray-500 font-semibold block">แคมเปญการตลาด</label>
+                        <button
+                          type="button"
+                          onClick={() => setShowCampaignManagerModal(true)}
+                          className="text-[10px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-0.5 cursor-pointer"
+                        >
+                          <Plus className="w-2.5 h-2.5" />
+                          <span>จัดการ (+ / -)</span>
+                        </button>
+                      </div>
+                      <select 
+                        id="edit-campaign"
+                        value={editCampaign} 
+                        onChange={(e) => {
+                          if (e.target.value === "__add_new__") {
+                            setShowCampaignManagerModal(true);
+                          } else {
+                            setEditCampaign(e.target.value);
+                          }
+                        }} 
+                        className="w-full bg-slate-50 border p-2 rounded"
+                      >
+                        <option value="">-- ไม่ได้ระบุแคมเปญ --</option>
+                        {campaigns.map(c => <option key={c} value={c}>{c}</option>)}
+                        <option value="__add_new__">➕ เพิ่ม/จัดการแคมเปญ...</option>
                       </select>
                     </div>
                     <div>
@@ -641,11 +822,11 @@ export default function LeadDetailsModal({
                       <div className="grid grid-cols-3 gap-2">
                         <div>
                           <label className="text-gray-500 block text-[10px]">รหัสลูกค้า (Customer Code)</label>
-                          <input type="text" value={editCustomerCode} onChange={(e) => setEditCustomerCode(e.target.value)} className="w-full bg-white border p-1 rounded" placeholder="MLZ-xxxx" />
+                          <input type="text" value={editCustomerCode} onChange={(e) => setEditCustomerCode(e.target.value)} className="w-full bg-white border p-1 rounded" placeholder="เช่น ML000001" />
                         </div>
                         <div>
                           <label className="text-gray-500 block text-[10px]">เรทราคาที่เสนอ</label>
-                          <input type="text" value={editRatePlan} onChange={(e) => setEditRatePlan(e.target.value)} className="w-full bg-white border p-1 rounded" placeholder="เช่น VIP 18" />
+                          <input type="text" value={editRatePlan} onChange={(e) => setEditRatePlan(e.target.value)} className="w-full bg-white border p-1 rounded" placeholder="ระบุเรทราคาที่เสนอ (เว้นว่างได้)" />
                         </div>
                         <div>
                           <label className="text-gray-500 block text-[10px]">ประเภทชำระเงิน</label>
@@ -781,6 +962,29 @@ export default function LeadDetailsModal({
                         {lead.customerType === "corporate" ? "🏢 นิติบุคคล" : "👤 บุคคลธรรมดา"}
                       </span>
                     </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">ช่องทางที่เข้ามา</span>
+                      <div className="flex items-center gap-1.5 mt-1">
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded font-bold border text-[10px] bg-blue-50 border-blue-200 text-blue-700">
+                          <Share2 className="w-3 h-3" /> {lead.channel || "Facebook"}
+                        </span>
+                        <button
+                          type="button"
+                          id="readonly-quick-edit-channel-btn"
+                          onClick={() => setIsEditing(true)}
+                          className="text-[10px] text-blue-600 hover:underline flex items-center gap-0.5 cursor-pointer"
+                          title="แก้ไขช่องทาง"
+                        >
+                          <Pencil className="w-2.5 h-2.5" />
+                        </button>
+                      </div>
+                    </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">แคมเปญการตลาดที่มา</span>
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 mt-1 rounded font-bold border text-[10px] bg-indigo-50 border-indigo-200 text-indigo-700">
+                        <Megaphone className="w-3 h-3" /> {lead.campaign || "ไม่ได้ระบุแคมเปญ"}
+                      </span>
+                    </div>
                   </div>
 
                   <div>
@@ -832,7 +1036,7 @@ export default function LeadDetailsModal({
                       </div>
                       <div>
                         <span className="text-indigo-950 block text-[9px] font-bold uppercase">เรทราคาเสนอขาย</span>
-                        <span className="text-xs font-bold text-indigo-800">{lead.ratePlan || "เรททั่วไป"}</span>
+                        <span className="text-xs font-bold text-indigo-800">{lead.ratePlan || "ไม่ได้ระบุ"}</span>
                       </div>
                       <div>
                         <span className="text-indigo-950 block text-[9px] font-bold uppercase">ประเภทจัดเก็บเงิน</span>
@@ -881,65 +1085,138 @@ export default function LeadDetailsModal({
             </div>
 
             {/* Quick Follow-up Scheduler Panel */}
-            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
-              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
-                <Clock3 className="w-4 h-4 text-amber-500" /> บันทึกวันและเวลาติดตามงาน (Follow Up Plan)
-              </h3>
+            <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                  <Clock3 className="w-4 h-4 text-amber-500" /> บันทึกวันและเวลาติดตามงาน (Follow Up Plan)
+                </h3>
+                {saveFollowUpSuccess && (
+                  <motion.span 
+                    initial={{ opacity: 0, y: -4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200"
+                  >
+                    <Check className="w-3.5 h-3.5" /> บันทึกแผนโทรเรียบร้อยแล้ว!
+                  </motion.span>
+                )}
+              </div>
+
+              {/* Quick Date Presets */}
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                <span className="text-slate-400 text-[10px] font-medium mr-1">ตั้งวันด่วน:</span>
+                <button
+                  type="button"
+                  id="preset-follow-tomorrow"
+                  onClick={() => handleSetQuickDate(1)}
+                  className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 border border-slate-200 rounded text-slate-600 font-medium transition-colors cursor-pointer"
+                >
+                  +1 วัน (พรุ่งนี้)
+                </button>
+                <button
+                  type="button"
+                  id="preset-follow-3days"
+                  onClick={() => handleSetQuickDate(3)}
+                  className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 border border-slate-200 rounded text-slate-600 font-medium transition-colors cursor-pointer"
+                >
+                  +3 วัน
+                </button>
+                <button
+                  type="button"
+                  id="preset-follow-7days"
+                  onClick={() => handleSetQuickDate(7)}
+                  className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 border border-slate-200 rounded text-slate-600 font-medium transition-colors cursor-pointer"
+                >
+                  +7 วัน (1 สัปดาห์)
+                </button>
+                <button
+                  type="button"
+                  id="preset-follow-14days"
+                  onClick={() => handleSetQuickDate(14)}
+                  className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 border border-slate-200 rounded text-slate-600 font-medium transition-colors cursor-pointer"
+                >
+                  +14 วัน
+                </button>
+              </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end text-xs">
                 <div>
-                  <label className="text-gray-400 block text-[10px] mb-1">วันที่ต้องการโทรติดตาม</label>
+                  <label className="text-gray-500 font-semibold block text-[10px] mb-1">วันที่ต้องการโทรติดตาม</label>
                   <div className="relative">
                     <input 
                       id="details-follow-date"
                       type="date" 
                       value={followUpDate} 
                       onChange={(e) => setFollowUpDate(e.target.value)}
-                      className="w-full bg-slate-50 border p-2 rounded focus:outline-none"
+                      className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-slate-800"
                     />
                   </div>
                 </div>
                 <div>
-                  <label className="text-gray-400 block text-[10px] mb-1">เวลาที่นัดหมาย</label>
+                  <label className="text-gray-500 font-semibold block text-[10px] mb-1">เวลาที่นัดหมาย</label>
                   <input 
                     id="details-follow-time"
                     type="time" 
                     value={followUpTime} 
                     onChange={(e) => setFollowUpTime(e.target.value)}
-                    className="w-full bg-slate-50 border p-2 rounded focus:outline-none"
+                    className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 font-mono text-slate-800"
                   />
                 </div>
-                <div className="flex gap-2">
-                  <button
-                    id="save-follow-settings-btn"
-                    type="button"
-                    onClick={handleSaveFollowUpSettings}
-                    className="flex-1 bg-slate-900 hover:bg-slate-800 text-white font-bold p-2.5 rounded text-[11px] transition-colors cursor-pointer text-center"
-                  >
-                    บันทึกแผนโทร
-                  </button>
-                  
+                <div>
+                  <label className="text-gray-500 font-semibold block text-[10px] mb-1">สถานะการโทร</label>
                   <button
                     id="toggle-follow-completed-btn"
                     type="button"
-                    onClick={() => {
-                      const updatedVal = !followUpCompleted;
-                      setFollowUpCompleted(updatedVal);
-                      onUpdateLead({
-                        ...lead,
-                        followUp: {
-                          date: followUpDate,
-                          time: followUpTime,
-                          isCompleted: updatedVal
-                        }
-                      });
-                    }}
-                    className={`px-3 py-2.5 border rounded flex items-center justify-center cursor-pointer transition-colors ${followUpCompleted ? "bg-green-50 border-green-200 text-green-700 font-bold" : "bg-white border-gray-200 hover:bg-gray-50 text-gray-400"}`}
-                    title="ติ๊กเครื่องหมายว่าเคลียร์สายแล้ว"
+                    onClick={() => setFollowUpCompleted(!followUpCompleted)}
+                    className={`w-full p-2 border rounded flex items-center justify-center gap-1.5 cursor-pointer transition-colors text-[11px] font-bold ${followUpCompleted ? "bg-emerald-50 border-emerald-200 text-emerald-700" : "bg-amber-50 border-amber-200 text-amber-700"}`}
+                    title="คลิกสลับสถานะ"
                   >
-                    {followUpCompleted ? "โทรแล้ว" : "รอดำเนินการ"}
+                    {followUpCompleted ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>โทรติดตามแล้ว</span>
+                      </>
+                    ) : (
+                      <>
+                        <Clock className="w-3.5 h-3.5" />
+                        <span>รอดำเนินการโทร</span>
+                      </>
+                    )}
                   </button>
                 </div>
+              </div>
+
+              <div>
+                <label className="text-gray-500 font-semibold block text-[10px] mb-1">โน้ต/หัวข้อที่ต้องคุยในการโทรครั้งนี้ (ถ้ามี)</label>
+                <input 
+                  id="details-follow-note"
+                  type="text"
+                  placeholder="เช่น โทรสรุปเรทราคา, สอบถามเรื่องเอกสาร, ติดตามผลย้ายค่าย..."
+                  value={followUpNote}
+                  onChange={(e) => setFollowUpNote(e.target.value)}
+                  className="w-full bg-slate-50 border border-slate-200 p-2 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800"
+                />
+              </div>
+
+              <div className="flex justify-end pt-1">
+                <button
+                  id="save-follow-settings-btn"
+                  type="button"
+                  disabled={isSavingFollowUp}
+                  onClick={handleSaveFollowUpSettings}
+                  className="px-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer flex items-center justify-center gap-2 shadow-xs disabled:opacity-50"
+                >
+                  {isSavingFollowUp ? (
+                    <>
+                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      <span>กำลังบันทึก...</span>
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                      <span>บันทึกแผนโทร (Save Plan)</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 
@@ -1609,8 +1886,25 @@ export default function LeadDetailsModal({
         </div>
 
         {/* Modal Footer actions */}
-        <div className="border-t border-gray-100 pt-3 flex justify-between items-center text-xs text-gray-500">
-          <span>รหัสระบบของลูกค้า: <span className="font-mono font-bold text-gray-700">{lead.id}</span></span>
+        <div className="border-t border-slate-200 pt-3 flex flex-wrap justify-between items-center gap-2 text-xs text-slate-500">
+          <div className="flex items-center gap-3">
+            <span>รหัสระบบของลูกค้า: <span className="font-mono font-bold text-slate-700">{lead.id}</span></span>
+            
+            {/* Danger Zone: Discrete delete button to prevent accidental clicks */}
+            {onDeleteLead && (
+              <button
+                id="details-delete-lead-btn"
+                type="button"
+                onClick={() => setShowDeleteModal(true)}
+                className="text-[11px] text-slate-400 hover:text-rose-600 font-bold flex items-center gap-1 transition-all cursor-pointer border border-slate-200 hover:border-rose-200 hover:bg-rose-50 px-2.5 py-1 rounded-lg"
+                title="ลบข้อมูล Lead รายนี้ออกจากระบบ"
+              >
+                <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                <span>ลบ Lead รายนี้</span>
+              </button>
+            )}
+          </div>
+
           <button 
             id="details-close-btn"
             onClick={onClose} 
@@ -1620,6 +1914,80 @@ export default function LeadDetailsModal({
           </button>
         </div>
       </motion.div>
+
+      {/* Delete Confirmation Modal (ป้องกันมือลั่น) */}
+      {showDeleteModal && (
+        <div className="fixed inset-0 bg-slate-950/70 backdrop-blur-xs z-[110] flex items-center justify-center p-4">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-md w-full p-6 space-y-4 text-slate-800"
+          >
+            <div className="flex items-start gap-3">
+              <div className="p-3 bg-rose-100 text-rose-600 rounded-full shrink-0">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-base font-bold text-slate-900">ยืนยันการลบข้อมูล Lead?</h3>
+                <p className="text-xs text-slate-500">
+                  คุณกำลังจะลบข้อมูลของร้าน <strong className="text-slate-900 font-bold">{lead.shopName}</strong> (ผู้ติดต่อ: {lead.contactName || "ไม่ระบุ"})
+                </p>
+              </div>
+            </div>
+
+            <div className="bg-rose-50 border border-rose-200 p-3 rounded-xl text-xs text-rose-800 space-y-1">
+              <p className="font-bold flex items-center gap-1">
+                <ShieldAlert className="w-4 h-4 text-rose-600" />
+                <span>คำเตือน: ข้อมูลจะถูกลบถาวร</span>
+              </p>
+              <p className="text-[11px] text-rose-700 leading-relaxed">
+                ประวัติการติดต่อ บันทึกช่วยจำ รายการโทร และไฟล์แนบทั้งหมดจะถูกลบออกจากฐานข้อมูลและไม่สามารถกู้คืนได้
+              </p>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-100">
+              <button
+                id="cancel-delete-lead-btn"
+                type="button"
+                disabled={isDeletingLead}
+                onClick={() => setShowDeleteModal(false)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-all cursor-pointer"
+              >
+                ยกเลิก (ไม่ลบ)
+              </button>
+
+              <button
+                id="confirm-delete-lead-btn"
+                type="button"
+                disabled={isDeletingLead}
+                onClick={async () => {
+                  if (!onDeleteLead) return;
+                  setIsDeletingLead(true);
+                  const res = await onDeleteLead(lead.id);
+                  setIsDeletingLead(false);
+                  if (res !== false) {
+                    setShowDeleteModal(false);
+                    onClose();
+                  }
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer shadow-xs disabled:opacity-50"
+              >
+                {isDeletingLead ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>กำลังลบ...</span>
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-3.5 h-3.5" />
+                    <span>ยืนยันลบข้อมูล</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
 
       {/* Lightbox Modal for uploaded images */}
       {lightboxUrl && (
@@ -1649,6 +2017,18 @@ export default function LeadDetailsModal({
             </div>
           </div>
         </div>
+      )}
+
+      {/* Campaign Manager Modal */}
+      {onAddCampaign && onDeleteCampaign && (
+        <CampaignManagerModal
+          isOpen={showCampaignManagerModal}
+          onClose={() => setShowCampaignManagerModal(false)}
+          campaigns={campaigns}
+          onAddCampaign={onAddCampaign}
+          onDeleteCampaign={onDeleteCampaign}
+          onSelectCampaign={(name) => setEditCampaign(name)}
+        />
       )}
     </div>
   );

@@ -1,5 +1,6 @@
 import React, { useState } from "react";
 import { Lead, LeadStatus, StatusLabels } from "../types";
+import MonthlyCalendar from "./MonthlyCalendar";
 import { 
   Users, UserCheck, FileText, PhoneCall, CheckCircle, TrendingUp, 
   AlertTriangle, ArrowUpRight, Award, Flame, BarChart3, HelpCircle,
@@ -21,9 +22,10 @@ interface DashboardViewProps {
   leads: Lead[];
   onNavigate: (tab: string) => void;
   onSelectLead: (lead: Lead) => void;
+  onUpdateLead?: (lead: Lead) => void;
 }
 
-export default function DashboardView({ leads, onNavigate, onSelectLead }: DashboardViewProps) {
+export default function DashboardView({ leads, onNavigate, onSelectLead, onUpdateLead }: DashboardViewProps) {
   const todayStr = new Date().toISOString().split("T")[0];
   const currentMonthStr = new Date().toISOString().substring(0, 7); // YYYY-MM
 
@@ -78,6 +80,7 @@ export default function DashboardView({ leads, onNavigate, onSelectLead }: Dashb
     { name: "Lead ใหม่", fullName: "🟡 Lead ใหม่", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.NEW_LEAD).length, fill: "#fbbf24" },
     { name: "ติดต่อแล้ว", fullName: "🟠 ติดต่อแล้ว", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.CONTACTED).length, fill: "#f97316" },
     { name: "ส่งรายละเอียด", fullName: "🔵 ส่งรายละเอียด", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.SENT_DETAILS).length, fill: "#3b82f6" },
+    { name: "นัด Meeting", fullName: "📅 นัด Meeting", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.MEETING).length, fill: "#6366f1" },
     { name: "รอเอกสาร", fullName: "🟣 รอเอกสาร", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.WAITING_DOCS).length, fill: "#a855f7" },
     { name: "สมัครแล้ว", fullName: "🟢 สมัครแล้ว", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.REGISTERED).length, fill: "#22c55e" },
     { name: "เปิดใช้งานแล้ว", fullName: "✅ เปิดใช้งานแล้ว", count: funnelFilteredLeads.filter(l => l.status === LeadStatus.ACTIVATED).length, fill: "#10b981" },
@@ -201,6 +204,14 @@ export default function DashboardView({ leads, onNavigate, onSelectLead }: Dashb
           </motion.div>
         ))}
       </div>
+
+      {/* Monthly Calendar Notifications Section on Main Dashboard */}
+      <MonthlyCalendar 
+        leads={leads} 
+        onSelectLead={onSelectLead} 
+        onUpdateLead={onUpdateLead} 
+        title="ปฏิทิน & แจ้งเตือนนัดหมายติดตามลูกค้า (รายเดือน)" 
+      />
 
       {/* Pipeline Funnel Bar Chart Card */}
       <div id="pipeline-funnel-chart-card" className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-4">

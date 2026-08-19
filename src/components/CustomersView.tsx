@@ -1,8 +1,10 @@
 import React, { useState } from "react";
 import { Lead, LeadStatus, StatusLabels, StatusColors } from "../types";
+import { generateNextCustomerCode } from "../utils/codeGenerator";
 import { 
   Users, UserCheck, CheckCircle2, ShieldCheck, Search, HelpCircle, 
-  MapPin, Clipboard, Calendar, Tag, CreditCard, ChevronRight, Play, Award 
+  MapPin, Clipboard, Calendar, Tag, CreditCard, ChevronRight, Play, Award,
+  Edit2, Check, X
 } from "lucide-react";
 import { motion } from "motion/react";
 
@@ -15,6 +17,28 @@ interface CustomersViewProps {
 export default function CustomersView({ leads, onSelectLead, onUpdateLead }: CustomersViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | LeadStatus.REGISTERED | LeadStatus.ACTIVATED | LeadStatus.REGULAR>("all");
+  const [editingRateId, setEditingRateId] = useState<string | null>(null);
+  const [rateInput, setRateInput] = useState<string>("");
+
+  const handleStartEditRate = (cust: Lead, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingRateId(cust.id);
+    setRateInput(cust.ratePlan || "");
+  };
+
+  const handleSaveRate = (cust: Lead, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    onUpdateLead({
+      ...cust,
+      ratePlan: rateInput.trim()
+    });
+    setEditingRateId(null);
+  };
+
+  const handleCancelRate = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setEditingRateId(null);
+  };
 
   // Filter customers (only registered, activated, or regular shippers)
   const customers = leads.filter(l => 
@@ -42,13 +66,13 @@ export default function CustomersView({ leads, onSelectLead, onUpdateLead }: Cus
   // Handle manual activation
   const handleActivatePort = (lead: Lead, e: React.MouseEvent) => {
     e.stopPropagation();
-    const generatedCode = `MLZ-${Math.floor(1000 + Math.random() * 9000)}`;
+    const generatedCode = generateNextCustomerCode(leads);
     const updated: Lead = {
       ...lead,
       status: LeadStatus.ACTIVATED,
       customerCode: lead.customerCode || generatedCode,
       activationDate: lead.activationDate || new Date().toISOString().split("T")[0],
-      ratePlan: lead.ratePlan || "Mylogiz VIP Flat 18 THB",
+      ratePlan: lead.ratePlan || "",
       paymentType: lead.paymentType || "เติมเงิน"
     };
 
@@ -58,7 +82,7 @@ export default function CustomersView({ leads, onSelectLead, onUpdateLead }: Cus
       {
         id: `tl_${Date.now()}`,
         title: "อนุมัติเปิดพอร์ตลูกค้าใหม่สำเร็จ",
-        description: `ฝ่ายทะเบียนเปิดใช้งานรหัสลูกค้า ${updated.customerCode} เรทเสนอขาย ${updated.ratePlan}`,
+        description: `ฝ่ายทะเบียนเปิดใช้งานรหัสลูกค้า ${updated.customerCode}${updated.ratePlan ? ` เรทเสนอขาย ${updated.ratePlan}` : ""}`,
         date: new Date().toISOString(),
         type: "activation"
       }
@@ -213,9 +237,53 @@ export default function CustomersView({ leads, onSelectLead, onUpdateLead }: Cus
                     {/* Salesperson */}
                     <td className="p-4 text-slate-500 font-medium">{cust.salesPerson}</td>
 
-                    {/* Rate plan */}
-                    <td className="p-4 font-semibold text-slate-700">
-                      {cust.ratePlan || <span className="text-slate-400 font-normal italic">รออนุมัติเรท</span>}
+                    {/* Rate plan (editable) */}
+                    <td className="p-4 font-semibold text-slate-700" onClick={(e) => e.stopPropagation()}>
+                      {editingRateId === cust.id ? (
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="text"
+                            value={rateInput}
+                            onChange={(e) => setRateInput(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") handleSaveRate(cust);
+                              if (e.key === "Escape") setEditingRateId(null);
+                            }}
+                            placeholder="ระบุเรทราคา"
+                            className="w-32 bg-white border border-blue-400 p-1 rounded text-xs focus:outline-hidden font-sans font-normal"
+                            autoFocus
+                          />
+                          <button
+                            type="button"
+                            onClick={(e) => handleSaveRate(cust, e)}
+                            className="p-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded cursor-pointer transition-colors"
+                            title="บันทึก"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleCancelRate}
+                            className="p-1 bg-slate-200 hover:bg-slate-300 text-slate-600 rounded cursor-pointer transition-colors"
+                            title="ยกเลิก"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ) : (
+                        <div 
+                          onClick={(e) => handleStartEditRate(cust, e)}
+                          className="inline-flex items-center gap-1.5 cursor-pointer group hover:bg-slate-100/80 px-2 py-1 rounded-lg transition-all"
+                          title="คลิกเพื่อระบุ/แก้ไขเรทราคาที่เสนอ"
+                        >
+                          {cust.ratePlan ? (
+                            <span className="text-slate-900 font-bold">{cust.ratePlan}</span>
+                          ) : (
+                            <span className="text-slate-400 font-normal italic text-[11px]">ไม่ได้ระบุ (คลิกแก้ไข)</span>
+                          )}
+                          <Edit2 className="w-3 h-3 text-slate-300 group-hover:text-blue-600 transition-colors shrink-0" />
+                        </div>
+                      )}
                     </td>
 
                     {/* Payment type */}

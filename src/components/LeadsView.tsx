@@ -3,18 +3,23 @@ import { Lead, LeadStatus, StatusLabels, StatusColors, THAI_PROVINCES, TRANSPORT
 import { 
   Plus, Search, SlidersHorizontal, Check, Star, Filter, 
   MapPin, Phone, MessageSquare, ArrowRight, Kanban, ListFilter,
-  X, Calendar, Clock, ShoppingBag, Download
+  X, Calendar, Clock, ShoppingBag, Download, Megaphone
 } from "lucide-react";
 import { motion } from "motion/react";
+import CampaignManagerModal from "./CampaignManagerModal";
 
 interface LeadsViewProps {
   leads: Lead[];
   salespersons?: string[];
+  campaigns?: string[];
+  onAddCampaign?: (name: string) => Promise<void>;
+  onDeleteCampaign?: (name: string) => Promise<void>;
   currentUser?: string | null;
   onAddLead: (lead: Omit<Lead, "id" | "createdAt" | "updatedAt" | "timeline" | "calls" | "files">) => void;
   onUpdateLeadStatus: (id: string, newStatus: LeadStatus) => void;
   onSelectLead: (lead: Lead) => void;
   onUpdateLead?: (updatedLead: Lead) => void;
+  onDeleteLead?: (leadId: string) => Promise<boolean> | void;
 }
 
 const ALL_CHANNELS = ["Facebook", "TikTok", "Website", "Line OA", "โทรเข้า", "คนแนะนำ", "หาเอง"];
@@ -22,7 +27,19 @@ const ALL_TAGS = ["เปิดร้านรับส่งใหม่", "เ
 const ALL_PROVINCES = THAI_PROVINCES;
 
 
-export default function LeadsView({ leads, salespersons = [], currentUser, onAddLead, onUpdateLeadStatus, onSelectLead, onUpdateLead }: LeadsViewProps) {
+export default function LeadsView({ 
+  leads, 
+  salespersons = [], 
+  campaigns = [],
+  onAddCampaign,
+  onDeleteCampaign,
+  currentUser, 
+  onAddLead, 
+  onUpdateLeadStatus, 
+  onSelectLead, 
+  onUpdateLead, 
+  onDeleteLead 
+}: LeadsViewProps) {
   // UI views: "kanban" or "list"
   const [viewType, setViewType] = useState<"kanban" | "list">("kanban");
   
@@ -31,10 +48,12 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
   const [selectedStatus, setSelectedStatus] = useState<string>("all");
   const [selectedSalesperson, setSelectedSalesperson] = useState<string>("all");
   const [selectedChannel, setSelectedChannel] = useState("all");
+  const [selectedCampaign, setSelectedCampaign] = useState<string>("all");
   const [selectedTag, setSelectedTag] = useState("all");
   const [selectedProvince, setSelectedProvince] = useState("all");
   const [selectedScore, setSelectedScore] = useState<number | "all">("all");
   const [showFilters, setShowFilters] = useState(false);
+  const [showCampaignManagerModal, setShowCampaignManagerModal] = useState(false);
 
   // Add Lead Modal State
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -46,6 +65,7 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
   const [newFacebook, setNewFacebook] = useState("");
   const [newProvince, setNewProvince] = useState("กรุงเทพมหานคร");
   const [newChannel, setNewChannel] = useState("Facebook");
+  const [newCampaign, setNewCampaign] = useState("");
   const [newTags, setNewTags] = useState<string[]>([]);
   const [newScore, setNewScore] = useState(3);
   const [newAddress, setNewAddress] = useState("");
@@ -77,12 +97,13 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
 
     const matchesStatus = selectedStatus === "all" || l.status === selectedStatus;
     const matchesChannel = selectedChannel === "all" || l.channel === selectedChannel;
+    const matchesCampaign = selectedCampaign === "all" || l.campaign === selectedCampaign;
     const matchesTag = selectedTag === "all" || l.tags.includes(selectedTag);
     const matchesProvince = selectedProvince === "all" || l.province === selectedProvince;
     const matchesScore = selectedScore === "all" || l.score === selectedScore;
     const matchesSalesperson = selectedSalesperson === "all" || l.salesPerson === selectedSalesperson;
 
-    return matchesSearch && matchesStatus && matchesChannel && matchesTag && matchesProvince && matchesScore && matchesSalesperson;
+    return matchesSearch && matchesStatus && matchesChannel && matchesCampaign && matchesTag && matchesProvince && matchesScore && matchesSalesperson;
   });
 
   const hasActiveFilters = 
@@ -90,6 +111,7 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
     selectedStatus !== "all" || 
     selectedSalesperson !== "all" ||
     selectedChannel !== "all" || 
+    selectedCampaign !== "all" ||
     selectedTag !== "all" || 
     selectedProvince !== "all" || 
     selectedScore !== "all";
@@ -99,6 +121,7 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
     setSelectedStatus("all");
     setSelectedSalesperson("all");
     setSelectedChannel("all");
+    setSelectedCampaign("all");
     setSelectedTag("all");
     setSelectedProvince("all");
     setSelectedScore("all");
@@ -185,8 +208,8 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
   const PIPELINE_COLUMNS: { id: LeadStatus; label: string; color: string }[] = [
     { id: LeadStatus.NEW_LEAD, label: "🟡 Lead ใหม่", color: "border-amber-400 bg-amber-500/10" },
     { id: LeadStatus.CONTACTED, label: "🟠 ติดต่อแล้ว", color: "border-orange-400 bg-orange-500/10" },
-    { id: LeadStatus.MEETING, label: "📅 นัด Meeting", color: "border-indigo-400 bg-indigo-500/10" },
     { id: LeadStatus.SENT_DETAILS, label: "🔵 ส่งรายละเอียด", color: "border-blue-400 bg-blue-500/10" },
+    { id: LeadStatus.MEETING, label: "📅 นัด Meeting", color: "border-indigo-400 bg-indigo-500/10" },
     { id: LeadStatus.WAITING_DOCS, label: "🟣 รอเอกสาร", color: "border-purple-400 bg-purple-500/10" },
     { id: LeadStatus.REGISTERED, label: "🟢 สมัครแล้ว", color: "border-green-400 bg-green-500/10" },
     { id: LeadStatus.ACTIVATED, label: "✅ เปิดใช้งานแล้ว", color: "border-emerald-400 bg-emerald-500/10" },
@@ -216,6 +239,7 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
       competitor: newCompetitor,
       salesPerson: newSalesPerson,
       customerType: newCustomerType,
+      campaign: newCampaign,
       documents: { idCard: false, bookBank: false, companyReg: false, taxDoc: false, storefrontPhoto: false },
       followUp: { date: "", time: "10:00", isCompleted: false },
       notes: initialNote.trim() ? [{
@@ -235,6 +259,7 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
     setNewFacebook("");
     setNewProvince("กรุงเทพมหานคร");
     setNewChannel("Facebook");
+    setNewCampaign("");
     setNewTags([]);
     setNewScore(3);
     setNewAddress("");
@@ -391,8 +416,21 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
             id="filters-panel"
             initial={{ opacity: 0, height: 0 }} 
             animate={{ opacity: 1, height: "auto" }} 
-            className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-3 border-t border-slate-100 text-xs"
+            className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-3 border-t border-slate-100 text-xs"
           >
+            <div>
+              <label className="block text-slate-500 font-semibold mb-1">แคมเปญการตลาด</label>
+              <select 
+                id="filter-campaign-select"
+                value={selectedCampaign} 
+                onChange={(e) => setSelectedCampaign(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="all">ทั้งหมด ทุกแคมเปญ</option>
+                {campaigns.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+
             <div>
               <label className="block text-slate-500 font-semibold mb-1">ช่องทางที่เข้ามา</label>
               <select 
@@ -537,8 +575,16 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
 
                       {/* Card Footer */}
                       <div className="border-t border-gray-50 pt-2 flex items-center justify-between text-[9px] text-gray-400 font-medium">
-                        <span>{lead.channel}</span>
-                        <span className="text-gray-400">{lead.salesPerson}</span>
+                        <div className="flex items-center gap-1 overflow-hidden">
+                          <span>{lead.channel}</span>
+                          {lead.campaign && (
+                            <span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5 truncate shrink-0" title={`แคมเปญ: ${lead.campaign}`}>
+                              <Megaphone className="w-2.5 h-2.5 shrink-0" />
+                              <span className="truncate max-w-[90px]">{lead.campaign}</span>
+                            </span>
+                          )}
+                        </div>
+                        <span className="text-gray-400 shrink-0 ml-1">{lead.salesPerson}</span>
                       </div>
 
                       {/* Move Controls inside Card to allow switching without DND package */}
@@ -787,6 +833,37 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
                   </select>
                 </div>
 
+                {/* Campaign */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between">
+                    <label className="block text-gray-600 font-bold">แคมเปญการตลาด (Campaign)</label>
+                    <button
+                      type="button"
+                      onClick={() => setShowCampaignManagerModal(true)}
+                      className="text-[11px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>จัดการแคมเปญ (+ / -)</span>
+                    </button>
+                  </div>
+                  <select 
+                    id="new-lead-campaign"
+                    value={newCampaign}
+                    onChange={(e) => {
+                      if (e.target.value === "__add_new__") {
+                        setShowCampaignManagerModal(true);
+                      } else {
+                        setNewCampaign(e.target.value);
+                      }
+                    }}
+                    className="w-full bg-slate-50 border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-slate-800"
+                  >
+                    <option value="">-- ไม่ได้ระบุแคมเปญ --</option>
+                    {campaigns.map(c => <option key={c} value={c}>{c}</option>)}
+                    <option value="__add_new__">➕ เพิ่ม/จัดการแคมเปญ...</option>
+                  </select>
+                </div>
+
                 {/* Lead Score */}
                 <div className="space-y-1">
                   <label className="block text-gray-600 font-bold">คะแนนความน่าสนใจ (Lead Score)</label>
@@ -934,6 +1011,19 @@ export default function LeadsView({ leads, salespersons = [], currentUser, onAdd
             </form>
           </motion.div>
         </div>
+      )}
+
+      {/* Campaign Manager Modal */}
+      {onAddCampaign && onDeleteCampaign && (
+        <CampaignManagerModal
+          isOpen={showCampaignManagerModal}
+          onClose={() => setShowCampaignManagerModal(false)}
+          campaigns={campaigns}
+          onAddCampaign={onAddCampaign}
+          onDeleteCampaign={onDeleteCampaign}
+          onSelectCampaign={(name) => setNewCampaign(name)}
+          leads={leads}
+        />
       )}
     </div>
   );
