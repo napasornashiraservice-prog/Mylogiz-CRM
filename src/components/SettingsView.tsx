@@ -1,8 +1,21 @@
-import React, { useState } from "react";
-import { Sliders, Database, Table, CloudLightning, Check, AlertTriangle, RefreshCw, Eye, User, Plus, Trash2, X, Edit, Lock, KeyRound, Download, Code, Copy, ExternalLink, FileSpreadsheet, Megaphone, Users } from "lucide-react";
-import { motion } from "motion/react";
-import { Lead } from "../types";
-import { exportLeadsToCSV, pushLeadsToGoogleSheet, GOOGLE_APPS_SCRIPT_CODE } from "../utils/googleSheetsSync";
+import React, { useState, useEffect } from "react";
+import { 
+  Sliders, Database, FileSpreadsheet, Check, AlertTriangle, 
+  RefreshCw, User, Plus, Trash2, X, Edit, Lock, KeyRound, 
+  Download, Megaphone, Users, ShieldCheck, Filter, Calendar,
+  Server, Link2, FileCode2, Globe, Clock, CheckCircle2, Eye, ShieldAlert,
+  ChevronDown, ChevronUp, Layers, CheckSquare, Square, ArrowRight, Tag, HelpCircle
+} from "lucide-react";
+import { motion, AnimatePresence } from "motion/react";
+import { 
+  Lead, LeadStatus, StatusLabels, PRESET_TAG_CATEGORIES,
+  CPLEXIntegrationConfig, CPLEXSyncResult, CPLEXFieldMappingItem,
+  DEFAULT_CPLEX_DATA_MAPPINGS
+} from "../types";
+import { exportLeadsToExcel, getFollowUpStatus } from "../utils/crmHelpers";
+import { cplexService } from "../integrations/cplex/cplexService";
+import CPLEXConnectionModal from "./integrations/CPLEXConnectionModal";
+import CPLEXLogsModal from "./integrations/CPLEXLogsModal";
 
 interface SettingsViewProps {
   leads?: Lead[];
@@ -14,18 +27,9 @@ interface SettingsViewProps {
   currentUser?: string | null;
   userPasswords?: Record<string, string>;
   onUpdatePassword?: (salespersonName: string, newPass: string) => Promise<boolean>;
-  sheetsConfig?: {
-    sheetUrl: string;
-    sheetName?: string;
-    webAppUrl?: string;
-    isEnabled: boolean;
-    lastSyncedAt: string | null;
-  };
   onUpdateSalespersons?: (newSalespersons: string[]) => Promise<boolean>;
   onRenameSelf?: (newName: string) => Promise<boolean>;
   onRenameSalesperson?: (oldName: string, newName: string) => Promise<boolean>;
-  onSyncGoogleSheets: (spreadsheetUrl: string, sheetName: string) => Promise<{ success: boolean; message: string; timestamp?: string }>;
-  onUpdateSheetsConfig?: (sheetUrl: string, sheetName: string, isEnabled: boolean, webAppUrl?: string) => Promise<boolean>;
 }
 
 export default function SettingsView({ 
@@ -38,46 +42,20 @@ export default function SettingsView({
   currentUser = null, 
   userPasswords = {},
   onUpdatePassword,
-  sheetsConfig,
   onUpdateSalespersons, 
   onRenameSelf, 
-  onRenameSalesperson,
-  onSyncGoogleSheets,
-  onUpdateSheetsConfig
+  onRenameSalesperson
 }: SettingsViewProps) {
   const managerName = salespersons[0] || "Phere";
-  const [spreadsheetUrl, setSpreadsheetUrl] = useState("https://docs.google.com/spreadsheets/d/1BxiMVs0XRA5nFMdKv19An905yF926dfgN1_aWf62kbI/edit");
-  const [sheetName, setSheetName] = useState("Mylogiz_CRM_Sync");
-  const [webAppUrl, setWebAppUrl] = useState("");
-  const [autoSync, setAutoSync] = useState(true);
-  const [showScriptModal, setShowScriptModal] = useState(false);
-  const [copiedCode, setCopiedCode] = useState(false);
+  const isSuperAdmin = currentUser?.toLowerCase() === "phere" || currentUser?.toLowerCase() === "jack" || currentUser === managerName;
 
-  React.useEffect(() => {
-    if (sheetsConfig) {
-      if (sheetsConfig.sheetUrl) {
-        setSpreadsheetUrl(sheetsConfig.sheetUrl);
-      }
-      if (sheetsConfig.sheetName) {
-        setSheetName(sheetsConfig.sheetName);
-      }
-      if (sheetsConfig.webAppUrl) {
-        setWebAppUrl(sheetsConfig.webAppUrl);
-      }
-      setAutoSync(sheetsConfig.isEnabled);
-    }
-  }, [sheetsConfig]);
+  // Excel Export Filters State
+  const [exportStatus, setExportStatus] = useState<string>("all");
+  const [exportSalesperson, setExportSalesperson] = useState<string>("all");
+  const [exportTag, setExportTag] = useState<string>("all");
+  const [exportSuccessMsg, setExportSuccessMsg] = useState<string | null>(null);
 
-  const [syncStatus, setSyncStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
-  const [syncMessage, setSyncMessage] = useState("");
-  const [syncLogs, setSyncLogs] = useState<Array<{ id: string; msg: string; time: string; type: "info" | "success" | "error" }>>([
-    { id: "1", msg: "ระบบเช็คความพร้อม: เชื่อมต่อ API Google Sheets สำเร็จ", time: "09:00:12", type: "info" },
-    { id: "2", msg: "สแกนพารามิเตอร์: ค้นพบข้อมูล 3 ชนิดแถว", time: "09:00:15", type: "info" }
-  ]);
-
-  const [newSalespersonName, setNewSalespersonName] = useState("");
-  const [salespersonMessage, setSalespersonMessage] = useState("");
-
+  // Campaign management state
   const [newCampaignInput, setNewCampaignInput] = useState("");
   const [campaignMessage, setCampaignMessage] = useState("");
 
@@ -106,11 +84,270 @@ export default function SettingsView({
     }
   };
 
+  // Self Profile Rename
   const [selfNameInput, setSelfNameInput] = useState(currentUser || "");
   const [selfRenameMessage, setSelfRenameMessage] = useState("");
 
+  const handleSelfRenameSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = selfNameInput.trim();
+    if (!trimmed || trimmed === currentUser) return;
+
+    if (onRenameSelf) {
+      const ok = await onRenameSelf(trimmed);
+      if (ok) {
+        setSelfRenameMessage(`✅ บันทึกชื่อโปรไฟล์ของคุณเป็น "${trimmed}" เรียบร้อยแล้ว`);
+      } else {
+        setSelfRenameMessage("❌ ไม่สามารถบันทึกชื่อได้ หรือชื่อนี้มีอยู่ในระบบแล้ว");
+      }
+      setTimeout(() => setSelfRenameMessage(""), 4000);
+    }
+  };
+
+  // Password Management
+  const [currentPassInput, setCurrentPassInput] = useState("");
+  const [newPassInput, setNewPassInput] = useState("");
+  const [confirmPassInput, setConfirmPassInput] = useState("");
+  const [passMsg, setPassMsg] = useState<{ text: string; isError: boolean } | null>(null);
+  const [isUpdatingPass, setIsUpdatingPass] = useState(false);
+
+  // Mylogiz CPLEX Integration State
+  const [cplexConfig, setCplexConfig] = useState<CPLEXIntegrationConfig>({
+    systemName: "Mylogiz CPLEX",
+    baseUrl: "https://app.mylogiz.ai/th/mylogiz-cplex/admin/dashboard",
+    authType: "bearer_token",
+    customHeaderName: "X-API-Key",
+    customerIdentifier: "customerCode",
+    dataMapping: DEFAULT_CPLEX_DATA_MAPPINGS,
+    status: "disconnected",
+    lastConnectedAt: null,
+    lastSyncedAt: null,
+    isEnabled: true
+  });
+  const [showCplexModal, setShowCplexModal] = useState(false);
+  const [showCplexLogsModal, setShowCplexLogsModal] = useState(false);
+  const [isTestingCplex, setIsTestingCplex] = useState(false);
+  const [isSyncingCplex, setIsSyncingCplex] = useState(false);
+  const [cplexSyncResult, setCplexSyncResult] = useState<CPLEXSyncResult | null>(null);
+  const [cplexFeedbackMsg, setCplexFeedbackMsg] = useState<{ type: "success" | "error" | "info"; text: string } | null>(null);
+
+  // Data Mapping Collapsible & State
+  const [isDataMappingExpanded, setIsDataMappingExpanded] = useState(true);
+  const [isSavingMapping, setIsSavingMapping] = useState(false);
+
+  useEffect(() => {
+    loadCplexConfig();
+  }, []);
+
+  const loadCplexConfig = async () => {
+    try {
+      const cfg = await cplexService.getConfig();
+      // If dataMapping is missing or empty, fallback to defaults
+      if (!cfg.dataMapping || cfg.dataMapping.length === 0) {
+        cfg.dataMapping = DEFAULT_CPLEX_DATA_MAPPINGS;
+      }
+      setCplexConfig(cfg);
+    } catch (err) {
+      console.error("Failed to load CPLEX config:", err);
+    }
+  };
+
+  const handleToggleMappingItem = async (itemId: string) => {
+    const currentMappings = cplexConfig.dataMapping || DEFAULT_CPLEX_DATA_MAPPINGS;
+    const updatedMappings = currentMappings.map(item => {
+      if (item.id === itemId) {
+        return { ...item, isEnabled: !item.isEnabled };
+      }
+      return item;
+    });
+
+    const updatedConfig = {
+      ...cplexConfig,
+      dataMapping: updatedMappings
+    };
+
+    setCplexConfig(updatedConfig);
+    setIsSavingMapping(true);
+
+    try {
+      await cplexService.saveConfig(updatedConfig);
+      setCplexFeedbackMsg({
+        type: "success",
+        text: "✅ บันทึกการตั้งค่าฟิลด์เชื่อมต่อเรียบร้อยแล้ว"
+      });
+    } catch (err: any) {
+      setCplexFeedbackMsg({
+        type: "error",
+        text: `❌ ไม่สามารถบันทึกการตั้งค่าฟิลด์ได้: ${err.message || ""}`
+      });
+    } finally {
+      setIsSavingMapping(false);
+      setTimeout(() => setCplexFeedbackMsg(null), 3000);
+    }
+  };
+
+  const handleToggleAllCategory = async (category: "customer" | "sales" | "shipping", enable: boolean) => {
+    const currentMappings = cplexConfig.dataMapping || DEFAULT_CPLEX_DATA_MAPPINGS;
+    const updatedMappings = currentMappings.map(item => {
+      if (item.category === category) {
+        return { ...item, isEnabled: enable };
+      }
+      return item;
+    });
+
+    const updatedConfig = {
+      ...cplexConfig,
+      dataMapping: updatedMappings
+    };
+
+    setCplexConfig(updatedConfig);
+    setIsSavingMapping(true);
+
+    try {
+      await cplexService.saveConfig(updatedConfig);
+      setCplexFeedbackMsg({
+        type: "success",
+        text: `✅ ${enable ? "เปิดใช้งาน" : "ปิดใช้งาน"}ฟิลด์ทั้งหมดในหมวดหมู่นี้แล้ว`
+      });
+    } catch (err: any) {
+      setCplexFeedbackMsg({
+        type: "error",
+        text: `❌ ไม่สามารถบันทึกการตั้งค่าได้: ${err.message || ""}`
+      });
+    } finally {
+      setIsSavingMapping(false);
+      setTimeout(() => setCplexFeedbackMsg(null), 3000);
+    }
+  };
+
+  const handleTestCplexConnection = async () => {
+    setIsTestingCplex(true);
+    setCplexFeedbackMsg(null);
+    try {
+      const res = await cplexService.testConnection();
+      if (res.success) {
+        setCplexConfig(prev => ({
+          ...prev,
+          status: "connected",
+          lastConnectedAt: new Date().toISOString()
+        }));
+        setCplexFeedbackMsg({
+          type: "success",
+          text: `✅ ${res.message} (${res.responseTimeMs} ms)`
+        });
+      } else {
+        setCplexConfig(prev => ({ ...prev, status: "error" }));
+        setCplexFeedbackMsg({
+          type: "error",
+          text: `❌ ${res.message}`
+        });
+      }
+    } catch (err: any) {
+      setCplexConfig(prev => ({ ...prev, status: "error" }));
+      setCplexFeedbackMsg({
+        type: "error",
+        text: `❌ ${err.message || "ไม่สามารถเชื่อมต่อ Mylogiz CPLEX ได้ กรุณาตรวจสอบการตั้งค่า API"}`
+      });
+    } finally {
+      setIsTestingCplex(false);
+      setTimeout(() => setCplexFeedbackMsg(null), 6000);
+    }
+  };
+
+  const handleSyncCplexData = async () => {
+    setIsSyncingCplex(true);
+    setCplexFeedbackMsg(null);
+    try {
+      const res = await cplexService.syncNow();
+      if (res.success && res.syncResult) {
+        setCplexSyncResult(res.syncResult);
+        setCplexConfig(prev => ({
+          ...prev,
+          status: "connected",
+          lastSyncedAt: res.syncResult.lastSync
+        }));
+        setCplexFeedbackMsg({
+          type: "success",
+          text: `✅ ${res.message} (นำเข้า: ${res.syncResult.recordsImported}, อัปเดต: ${res.syncResult.recordsUpdated})`
+        });
+      } else {
+        setCplexFeedbackMsg({
+          type: "error",
+          text: `❌ ${res.message || "การซิงค์ข้อมูลล้มเหลว"}`
+        });
+      }
+    } catch (err: any) {
+      setCplexFeedbackMsg({
+        type: "error",
+        text: `❌ ${err.message || "เกิดข้อผิดพลาดในการซิงค์ข้อมูลกับ CPLEX"}`
+      });
+    } finally {
+      setIsSyncingCplex(false);
+      setTimeout(() => setCplexFeedbackMsg(null), 6000);
+    }
+  };
+
+  const handleUpdatePasswordSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!currentUser) return;
+    if (newPassInput.length < 4) {
+      setPassMsg({ text: "⚠️ รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 4 ตัวอักษร", isError: true });
+      return;
+    }
+    if (newPassInput !== confirmPassInput) {
+      setPassMsg({ text: "⚠️ รหัสผ่านใหม่และยืนยันรหัสผ่านไม่ตรงกัน", isError: true });
+      return;
+    }
+
+    const correctCurrent = userPasswords[currentUser] || "1234";
+    if (currentPassInput !== correctCurrent) {
+      setPassMsg({ text: "❌ รหัสผ่านปัจจุบันไม่ถูกต้อง", isError: true });
+      return;
+    }
+
+    setIsUpdatingPass(true);
+    if (onUpdatePassword) {
+      const ok = await onUpdatePassword(currentUser, newPassInput);
+      if (ok) {
+        setPassMsg({ text: "✅ เปลี่ยนรหัสผ่านของคุณเรียบร้อยแล้ว", isError: false });
+        setCurrentPassInput("");
+        setNewPassInput("");
+        setConfirmPassInput("");
+      } else {
+        setPassMsg({ text: "❌ เกิดข้อผิดพลาดในการบันทึกรหัสผ่าน", isError: true });
+      }
+    }
+    setIsUpdatingPass(false);
+    setTimeout(() => setPassMsg(null), 4000);
+  };
+
+  // Salesperson Management
+  const [newSalespersonName, setNewSalespersonName] = useState("");
+  const [salespersonMessage, setSalespersonMessage] = useState("");
   const [editingSp, setEditingSp] = useState<string | null>(null);
   const [editingNameInput, setEditingNameInput] = useState<string>("");
+
+  const handleAddSalesperson = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const trimmed = newSalespersonName.trim();
+    if (!trimmed) return;
+    if (salespersons.includes(trimmed)) {
+      setSalespersonMessage("❌ มีชื่อพนักงานขายคนนี้อยู่แล้วในระบบ");
+      setTimeout(() => setSalespersonMessage(""), 3000);
+      return;
+    }
+    if (onUpdateSalespersons) {
+      const updated = [...salespersons, trimmed];
+      const ok = await onUpdateSalespersons(updated);
+      if (ok) {
+        setNewSalespersonName("");
+        setSalespersonMessage(`✅ เพิ่มเซลส์ "${trimmed}" สำเร็จ`);
+      } else {
+        setSalespersonMessage("❌ เกิดข้อผิดพลาดในการเพิ่มรายชื่อ");
+      }
+      setTimeout(() => setSalespersonMessage(""), 3000);
+    }
+  };
 
   const handleSaveRename = async (oldName: string) => {
     const trimmed = editingNameInput.trim();
@@ -118,184 +355,58 @@ export default function SettingsView({
       setEditingSp(null);
       return;
     }
-    
-    if (salespersons.includes(trimmed) && trimmed !== oldName) {
-      setSalespersonMessage("❌ มีรายชื่อเซลส์ผู้นี้อยู่ในระบบแล้ว");
-      return;
-    }
-
     if (onRenameSalesperson) {
-      setSalespersonMessage("กำลังเปลี่ยนชื่อ...");
-      const success = await onRenameSalesperson(oldName, trimmed);
-      if (success) {
-        setSalespersonMessage("✅ เปลี่ยนชื่อสำเร็จ");
-        setEditingSp(null);
+      const ok = await onRenameSalesperson(oldName, trimmed);
+      if (ok) {
+        setSalespersonMessage(`✅ เปลี่ยนชื่อเซลส์จาก "${oldName}" เป็น "${trimmed}" สำเร็จ`);
       } else {
-        setSalespersonMessage("❌ เกิดข้อผิดพลาดในการเปลี่ยนชื่อ");
+        setSalespersonMessage("❌ ไม่สามารถเปลี่ยนชื่อได้");
       }
       setTimeout(() => setSalespersonMessage(""), 3000);
     }
-  };
-
-  const [currentPassInput, setCurrentPassInput] = useState("");
-  const [newPassInput, setNewPassInput] = useState("");
-  const [confirmPassInput, setConfirmPassInput] = useState("");
-  const [passMsg, setPassMsg] = useState<{ text: string; isError: boolean } | null>(null);
-  const [isUpdatingPass, setIsUpdatingPass] = useState(false);
-
-  React.useEffect(() => {
-    if (currentUser) {
-      setSelfNameInput(currentUser);
-    }
-  }, [currentUser]);
-
-  const handleUpdatePasswordSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!currentUser || !onUpdatePassword) return;
-    setPassMsg(null);
-
-    const expectedCurrentPass = userPasswords[currentUser] || "1234";
-    if (currentPassInput.trim() !== expectedCurrentPass) {
-      setPassMsg({ text: "❌ รหัสผ่านปัจจุบันไม่ถูกต้อง (รหัสเริ่มต้นคือ 1234)", isError: true });
-      return;
-    }
-
-    if (!newPassInput.trim() || newPassInput.trim().length < 4) {
-      setPassMsg({ text: "❌ รหัสผ่านใหม่ต้องมีความยาวอย่างน้อย 4 ตัวอักษร", isError: true });
-      return;
-    }
-
-    if (newPassInput.trim() !== confirmPassInput.trim()) {
-      setPassMsg({ text: "❌ รหัสผ่านใหม่และการยืนยันรหัสผ่านไม่ตรงกัน", isError: true });
-      return;
-    }
-
-    setIsUpdatingPass(true);
-    const success = await onUpdatePassword(currentUser, newPassInput.trim());
-    setIsUpdatingPass(false);
-
-    if (success) {
-      setPassMsg({ text: "✅ บันทึกรหัสผ่านใหม่เรียบร้อยแล้ว ท่านสามารถใช้รหัสนี้ในการเข้าสู่ระบบครั้งถัดไป", isError: false });
-      setCurrentPassInput("");
-      setNewPassInput("");
-      setConfirmPassInput("");
-    } else {
-      setPassMsg({ text: "❌ ไม่สามารถตั้งรหัสผ่านใหม่ได้ กรุณาลองใหม่อีกครั้ง", isError: true });
-    }
-  };
-
-  const handleSelfRenameSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selfNameInput.trim() || !onRenameSelf) return;
-    const trimmed = selfNameInput.trim();
-    if (trimmed === currentUser) return;
-    
-    setSelfRenameMessage("กำลังแก้ไขชื่อพนักงานขาย...");
-    const success = await onRenameSelf(trimmed);
-    if (success) {
-      setSelfRenameMessage("✅ แก้ไขชื่อบัญชีสำเร็จเป็น " + trimmed);
-    } else {
-      setSelfRenameMessage("❌ ไม่สามารถแก้ไขชื่อพนักงานขายได้");
-    }
-    setTimeout(() => setSelfRenameMessage(""), 4000);
-  };
-
-  const handleAddSalesperson = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!newSalespersonName.trim()) return;
-    const trimmed = newSalespersonName.trim();
-    if (salespersons.includes(trimmed)) {
-      setSalespersonMessage("❌ มีรายชื่อเซลส์ผู้นี้อยู่ในระบบแล้ว");
-      return;
-    }
-    const updated = [...salespersons, trimmed];
-    if (onUpdateSalespersons) {
-      const ok = await onUpdateSalespersons(updated);
-      if (ok) {
-        setNewSalespersonName("");
-        setSalespersonMessage("✅ เพิ่มรายชื่อเซลส์สำเร็จ");
-        setTimeout(() => setSalespersonMessage(""), 3000);
-      }
-    }
+    setEditingSp(null);
   };
 
   const handleDeleteSalesperson = async (name: string) => {
     if (salespersons.length <= 1) {
-      setSalespersonMessage("⚠️ ต้องมีรายชื่อเซลส์ผู้รับผิดชอบดูแลอย่างน้อย 1 คน");
+      setSalespersonMessage("⚠️ ต้องมีพนักงานขายอย่างน้อย 1 คนในระบบ");
       setTimeout(() => setSalespersonMessage(""), 3000);
       return;
     }
-    const updated = salespersons.filter(s => s !== name);
-    if (onUpdateSalespersons) {
-      const ok = await onUpdateSalespersons(updated);
-      if (ok) {
-        setSalespersonMessage("✅ ลบรายชื่อเซลส์สำเร็จ");
+    if (name === managerName) {
+      setSalespersonMessage("⚠️ ไม่สามารถลบผู้จัดการหลักของระบบได้");
+      setTimeout(() => setSalespersonMessage(""), 3000);
+      return;
+    }
+    if (confirm(`คุณแน่ใจหรือไม่ว่าต้องการลบเซลส์ "${name}" ออกจากระบบ?`)) {
+      if (onUpdateSalespersons) {
+        const updated = salespersons.filter(s => s !== name);
+        const ok = await onUpdateSalespersons(updated);
+        if (ok) {
+          setSalespersonMessage(`🗑️ ลบเซลส์ "${name}" ออกจากระบบเรียบร้อย`);
+        }
         setTimeout(() => setSalespersonMessage(""), 3000);
       }
     }
   };
 
-  const handleManualSync = async () => {
-    setSyncStatus("loading");
-    const startLog = {
-      id: Date.now().toString(),
-      msg: `เริ่มจัดระเบียบโครงสร้างแถวข้อมูลลูกค้าทั้งหมด ${leadsCount} ราย...`,
-      time: new Date().toLocaleTimeString("th-TH"),
-      type: "info" as const
-    };
-    const connectLog = {
-      id: (Date.now() + 1).toString(),
-      msg: `เชื่อมต่อ Google Sheet URL: ${spreadsheetUrl} [แผ่นงาน: "${sheetName}"]...`,
-      time: new Date().toLocaleTimeString("th-TH"),
-      type: "info" as const
-    };
-    setSyncLogs(prev => [...prev, startLog, connectLog]);
+  // Filtered Leads for Export
+  const exportTargetLeads = leads.filter(l => {
+    if (exportStatus !== "all" && l.status !== exportStatus) return false;
+    if (exportSalesperson !== "all" && l.salesPerson !== exportSalesperson) return false;
+    if (exportTag !== "all" && !(l.tags || []).includes(exportTag)) return false;
+    return true;
+  });
 
-    try {
-      if (webAppUrl && webAppUrl.startsWith("http")) {
-        const webAppRes = await pushLeadsToGoogleSheet(webAppUrl, sheetName, leads);
-        if (webAppRes.success) {
-          await onSyncGoogleSheets(spreadsheetUrl, sheetName);
-          setSyncStatus("success");
-          setSyncMessage(`ส่งข้อมูล ${leadsCount} รายการไปยัง Google Sheet ผ่าน Apps Script เรียบร้อยแล้ว!`);
-          const successLog = {
-            id: (Date.now() + 2).toString(),
-            msg: `✓ บันทึกข้อมูล Leads ทั้งหมด ${leadsCount} แถว เข้าสเปรดชีตสำเร็จแล้ว (แผ่นงาน: "${sheetName}")`,
-            time: new Date().toLocaleTimeString("th-TH"),
-            type: "success" as const
-          };
-          setSyncLogs(prev => [...prev, successLog]);
-          return;
-        }
-      }
+  const allExistingTags = Array.from(new Set(leads.flatMap(l => l.tags || []))).filter(Boolean);
 
-      const result = await onSyncGoogleSheets(spreadsheetUrl, sheetName);
-      if (result.success) {
-        setSyncStatus("success");
-        setSyncMessage(result.message);
-        
-        const successLog = {
-          id: (Date.now() + 2).toString(),
-          msg: `✓ บันทึกข้อมูล Leads ทั้งหมด ${leadsCount} แถว เรียบร้อยแล้ว (แผ่นงาน: "${sheetName}")`,
-          time: new Date().toLocaleTimeString("th-TH"),
-          type: "success" as const
-        };
-        setSyncLogs(prev => [...prev, successLog]);
-      } else {
-        setSyncStatus("error");
-        setSyncMessage(result.message);
-        
-        const errorLog = {
-          id: (Date.now() + 2).toString(),
-          msg: `✗ ซิงค์ล้มเหลว: ${result.message}`,
-          time: new Date().toLocaleTimeString("th-TH"),
-          type: "error" as const
-        };
-        setSyncLogs(prev => [...prev, errorLog]);
-      }
-    } catch (err: any) {
-      setSyncStatus("error");
-      setSyncMessage(err.message || "เกิดข้อผิดพลาดในการเชื่อมต่อเครือข่าย");
+  const handlePerformExcelExport = () => {
+    const dateStr = new Date().toISOString().split("T")[0];
+    const filename = `Mylogiz_CRM_Leads_${dateStr}.xlsx`;
+    const success = exportLeadsToExcel(exportTargetLeads, filename);
+    if (success) {
+      setExportSuccessMsg(`✅ ส่งออกไฟล์ Excel สำเร็จ (${exportTargetLeads.length} รายการ)`);
+      setTimeout(() => setExportSuccessMsg(null), 4000);
     }
   };
 
@@ -303,205 +414,590 @@ export default function SettingsView({
     <div className="space-y-6" id="settings-view-container">
       {/* View Header */}
       <div>
-        <h2 className="text-xl font-bold text-gray-800">การตั้งค่าและการซิงค์ข้อมูล (CRM System Settings)</h2>
-        <p className="text-xs text-gray-500 mt-0.5">เชื่อมโยงระบบ CRM กับ Google Sheets เพื่อแชร์ฐานข้อมูลของลูกค้าและติดตามยอดพัสดุได้ทุกที่ทุกเวลา</p>
+        <h2 className="text-xl font-bold text-slate-800">การตั้งค่าระบบ CRM (CRM System Settings)</h2>
+        <p className="text-xs text-slate-500 mt-0.5">
+          จัดการข้อมูลพนักงานขาย แคมเปญการตลาด เปลี่ยนรหัสผ่าน และส่งออกฐานข้อมูลลูกค้าเป็นไฟล์ Excel (.xlsx)
+        </p>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         
-        {/* Google Sheets Config Box (2/3 cols) */}
-        <div id="settings-sheets-config-card" className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs lg:col-span-2 space-y-5">
-          <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-            <Table className="w-5 h-5 text-emerald-600" />
-            <div>
-              <h3 className="text-slate-800 font-bold text-sm">กำหนดค่า API Google Sheets Sync</h3>
-              <p className="text-[10px] text-slate-400">ระบบจะอัปเดตไฟล์ชีทอัตโนมัติ ทุกครั้งที่มีการแก้ไข/เพิ่มข้อมูลลูกค้าในระบบ</p>
+        {/* CPLEX API & Integration Center (Full 3 cols) */}
+        <div id="settings-cplex-integration-card" className="bg-white p-5 rounded-2xl border border-indigo-100 shadow-xs lg:col-span-3 space-y-5">
+          
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2.5 bg-gradient-to-br from-indigo-600 to-indigo-800 text-white rounded-xl shadow-xs shadow-indigo-500/20">
+                <Server className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-slate-800 font-bold text-sm">เชื่อมต่อ Mylogiz CPLEX (API & Integration)</h3>
+                  
+                  {/* Connection Status Badge */}
+                  {cplexConfig.status === "connected" ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center gap-1.5 font-mono">
+                      <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                      เชื่อมต่อแล้ว (Connected)
+                    </span>
+                  ) : cplexConfig.status === "error" ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-rose-50 text-rose-700 border border-rose-200 flex items-center gap-1.5 font-mono">
+                      <span className="w-1.5 h-1.5 rounded-full bg-rose-500"></span>
+                      เชื่อมต่อไม่ได้ (Error)
+                    </span>
+                  ) : cplexConfig.status === "syncing" || isSyncingCplex ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-700 border border-amber-200 flex items-center gap-1.5 font-mono">
+                      <RefreshCw className="w-3 h-3 animate-spin text-amber-600" />
+                      กำลัง Sync (Syncing...)
+                    </span>
+                  ) : cplexConfig.status === "waiting_for_api" || !cplexConfig.hasToken ? (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-amber-50 text-amber-800 border border-amber-300 flex items-center gap-1.5 font-mono">
+                      <Clock className="w-3 h-3 text-amber-600" />
+                      รอการตั้งค่า API
+                    </span>
+                  ) : (
+                    <span className="px-2.5 py-0.5 rounded-full text-xs font-bold bg-slate-100 text-slate-600 border border-slate-200 flex items-center gap-1.5 font-mono">
+                      <span className="w-1.5 h-1.5 rounded-full bg-slate-400"></span>
+                      ยังไม่ได้เชื่อมต่อ (Disconnected)
+                    </span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  เชื่อมต่อ Mylogiz CRM กับระบบ Mylogiz CPLEX เพื่อดึงข้อมูลการใช้งานของลูกค้า เช่น ยอดขาย จำนวนออเดอร์ จำนวนพัสดุ และข้อมูลอื่น ๆ
+                </p>
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowCplexModal(true)}
+                className="px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+              >
+                <Sliders className="w-3.5 h-3.5" />
+                <span>เชื่อมต่อระบบ</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleTestCplexConnection}
+                disabled={isTestingCplex || isSyncingCplex}
+                className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isTestingCplex ? "animate-spin text-indigo-600" : ""}`} />
+                <span>{isTestingCplex ? "กำลังทดสอบ..." : "ทดสอบการเชื่อมต่อ"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSyncCplexData}
+                disabled={isSyncingCplex || isTestingCplex}
+                className="px-3.5 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors disabled:opacity-50 cursor-pointer"
+              >
+                <CheckCircle2 className={`w-3.5 h-3.5 ${isSyncingCplex ? "animate-spin text-emerald-600" : ""}`} />
+                <span>{isSyncingCplex ? "กำลัง Sync..." : "Sync ข้อมูล"}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowCplexLogsModal(true)}
+                className="px-3.5 py-2 bg-slate-50 hover:bg-slate-100 text-slate-700 border border-slate-200 rounded-xl text-xs font-bold flex items-center gap-1.5 transition-colors cursor-pointer"
+              >
+                <FileCode2 className="w-3.5 h-3.5" />
+                <span>ดู Log</span>
+              </button>
             </div>
           </div>
 
-          <div className="space-y-4 text-xs">
-            {/* URL input */}
-            <div className="space-y-1">
-              <label className="text-slate-500 font-bold block">Spreadsheet URL (ลิงก์สเปรดชีต Google Sheets)</label>
-              <div className="flex gap-2">
-                <input
-                  id="settings-sheets-url-input"
-                  type="text"
-                  value={spreadsheetUrl}
-                  onChange={(e) => setSpreadsheetUrl(e.target.value)}
-                  className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-2.5 font-mono focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white text-slate-700"
-                  placeholder="https://docs.google.com/spreadsheets/d/..."
-                />
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (spreadsheetUrl && spreadsheetUrl.startsWith("http")) {
-                      window.open(spreadsheetUrl, "_blank");
-                    } else {
-                      alert("กรุณาระบุลิงก์ Google Sheets ที่ถูกต้อง");
-                    }
-                  }}
-                  className="px-4 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer"
-                >
-                  <Eye className="w-4 h-4" />
-                  <span>เปิดลิงก์</span>
-                </button>
+          {/* Feedback Message */}
+          {cplexFeedbackMsg && (
+            <div className={`p-3 rounded-xl border text-xs font-semibold flex items-center gap-2 ${
+              cplexFeedbackMsg.type === "success"
+                ? "bg-emerald-50 border-emerald-200 text-emerald-800"
+                : "bg-rose-50 border-rose-200 text-rose-800"
+            }`}>
+              <span>{cplexFeedbackMsg.text}</span>
+            </div>
+          )}
+
+          {/* Config Details & Sync Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            
+            {/* 1. Endpoint & Auth Details */}
+            <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5 text-xs">
+              <span className="text-slate-400 font-bold text-[10px] uppercase tracking-wider block">
+                API Base URL
+              </span>
+              <div className="font-semibold text-slate-800 truncate" title={cplexConfig.baseUrl}>
+                {cplexConfig.baseUrl || "ยังไม่ได้ระบุ"}
+              </div>
+              <div className="flex items-center gap-2 pt-1 text-[11px] text-slate-500">
+                <span>รูปแบบยืนยัน:</span>
+                <span className="font-mono font-bold text-slate-700 bg-white px-1.5 py-0.5 rounded border border-slate-200">
+                  {cplexConfig.authType === "bearer_token" ? "Bearer Token" : cplexConfig.authType === "api_key" ? "API Key" : "Custom Header"}
+                </span>
               </div>
             </div>
 
-            {/* Apps Script Web App URL input */}
-            <div className="space-y-1 bg-emerald-50/60 p-3 rounded-lg border border-emerald-100">
-              <div className="flex items-center justify-between">
-                <label className="text-emerald-900 font-bold block text-xs">
-                  ⚡ Google Apps Script Web App URL (สำหรับซิงค์ข้อมูลตรงเข้าสเปรดชีต)
-                </label>
-                <button
-                  type="button"
-                  onClick={() => setShowScriptModal(true)}
-                  className="text-[11px] text-emerald-700 hover:text-emerald-900 font-bold underline flex items-center gap-1 cursor-pointer"
-                >
-                  <Code className="w-3.5 h-3.5" />
-                  <span>คัดลอกโค้ด & วิธีตั้งค่า</span>
-                </button>
+            {/* 2. Customer Identifier Matching */}
+            <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5 text-xs">
+              <span className="text-slate-400 font-bold text-[10px] uppercase tracking-wider block">
+                การจับคู่ข้อมูลลูกค้า (Identifier)
+              </span>
+              <div className="font-semibold text-slate-800">
+                {cplexConfig.customerIdentifier === "customerCode" ? "รหัสลูกค้า (Customer Code เช่น MLZ-1001)" :
+                 cplexConfig.customerIdentifier === "externalCustomerId" ? "External Customer ID (รหัส CPLEX)" :
+                 cplexConfig.customerIdentifier === "phone" ? "เบอร์โทรศัพท์ (Phone)" :
+                 cplexConfig.customerIdentifier === "email" ? "อีเมล (Email)" :
+                 "Customer ID (CRM ID)"}
               </div>
-              <input
-                id="settings-sheets-webapp-url-input"
-                type="text"
-                value={webAppUrl}
-                onChange={(e) => setWebAppUrl(e.target.value)}
-                className="w-full bg-white border border-emerald-200 rounded-lg p-2.5 font-mono focus:outline-none focus:ring-2 focus:ring-emerald-500 text-slate-800 text-xs"
-                placeholder="https://script.google.com/macros/s/.../exec"
-              />
-              <p className="text-[10px] text-emerald-700">
-                💡 เมื่อใส่ Web App URL ระบบจะส่งข้อมูลลูกค้าเข้า Google Sheet ของคุณทันทีโดยตรง
-              </p>
+              <div className="text-[11px] text-slate-500 pt-1">
+                จับคู่ข้อมูลพอร์ตลูกค้ากับระบบหลังบ้าน CPLEX
+              </div>
             </div>
 
-            {/* Export & Tools Quick Bar */}
-            <div className="flex flex-wrap items-center gap-2 pt-1 pb-1">
-              <button
-                type="button"
-                onClick={() => exportLeadsToCSV(leads)}
-                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-lg text-xs flex items-center gap-2 transition-all shadow-xs cursor-pointer"
-              >
-                <Download className="w-4 h-4" />
-                <span>ดาวน์โหลดไฟล์ CSV (สำหรับเปิดบน Google Sheets)</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowScriptModal(true)}
-                className="px-3.5 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-lg text-xs flex items-center gap-2 transition-all cursor-pointer"
-              >
-                <Code className="w-4 h-4 text-emerald-400" />
-                <span>รับโค้ด Apps Script เชื่อมชีท</span>
-              </button>
-            </div>
-
-            {/* Grid for sheet name and toggle */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-slate-500 font-bold block">Sheet Tab Name (ชื่อแผ่นงาน)</label>
-                <input
-                  id="settings-sheets-name-input"
-                  type="text"
-                  value={sheetName}
-                  onChange={(e) => setSheetName(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white text-slate-700"
-                  placeholder="เช่น Mylogiz_CRM_Sync"
-                />
+            {/* 3. Sync Status & Last Activity */}
+            <div className="p-3.5 bg-slate-50 rounded-xl border border-slate-200 space-y-1.5 text-xs">
+              <span className="text-slate-400 font-bold text-[10px] uppercase tracking-wider block">
+                สถานะการ Sync ล่าสุด
+              </span>
+              <div className="font-semibold text-slate-800 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-slate-400" />
+                <span>{cplexConfig.lastSyncedAt || "ยังไม่มีประวัติการ Sync"}</span>
               </div>
-
-              {/* Toggle switch for auto-sync */}
-              <div className="flex items-center justify-between p-3.5 bg-slate-50 border border-slate-100 rounded-lg">
-                <div>
-                  <span className="font-bold text-slate-700 block">ซิงค์อัตโนมัติ (Auto-Sync)</span>
-                  <span className="text-[10px] text-slate-400">ส่งข้อมูลทันทีเมื่อกดบันทึกดีล</span>
+              {cplexSyncResult && (
+                <div className="flex items-center gap-2 pt-1 text-[11px] text-slate-600">
+                  <span className="text-emerald-700 font-bold">นำเข้า {cplexSyncResult.recordsImported}</span>
+                  <span>•</span>
+                  <span className="text-blue-700 font-bold">อัปเดต {cplexSyncResult.recordsUpdated}</span>
+                  {cplexSyncResult.recordsFailed > 0 && (
+                    <>
+                      <span>•</span>
+                      <span className="text-rose-700 font-bold">ไม่สำเร็จ {cplexSyncResult.recordsFailed}</span>
+                    </>
+                  )}
                 </div>
-                <button
-                  id="settings-autosync-toggle-btn"
-                  type="button"
-                  onClick={async () => {
-                    const nextVal = !autoSync;
-                    setAutoSync(nextVal);
-                    if (onUpdateSheetsConfig) {
-                      await onUpdateSheetsConfig(spreadsheetUrl, sheetName, nextVal, webAppUrl);
-                    }
-                  }}
-                  className={`w-11 h-6 rounded-full transition-all relative cursor-pointer ${autoSync ? "bg-emerald-500" : "bg-slate-300"}`}
-                >
-                  <div className={`w-4.5 h-4.5 bg-white rounded-full absolute top-0.75 transition-all shadow-xs ${autoSync ? "right-1" : "left-1"}`} />
-                </button>
-              </div>
+              )}
             </div>
 
-            {/* Save Config and Sync Buttons */}
-            <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-4">
-              <div className="space-y-1">
-                <span className="font-bold text-slate-800 block">จัดการและซิงค์ข้อมูลสเปรดชีต</span>
-                <p className="text-[10px] text-slate-400">คุณสามารถเลือกบันทึกการตั้งค่า หรือซิงค์ข้อมูลลูกค้าทั้งหมด {leadsCount} รายเข้าชีททันที</p>
-              </div>
+          </div>
 
-              <div className="flex flex-wrap gap-2 shrink-0">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    if (onUpdateSheetsConfig) {
-                      setSyncStatus("loading");
-                      const ok = await onUpdateSheetsConfig(spreadsheetUrl, sheetName, autoSync, webAppUrl);
-                      if (ok) {
-                        setSyncStatus("success");
-                        setSyncMessage("บันทึกการตั้งค่า Google Sheets สำเร็จ");
-                        setTimeout(() => setSyncStatus("idle"), 3000);
-                      } else {
-                        setSyncStatus("error");
-                        setSyncMessage("ไม่สามารถบันทึกการตั้งค่าได้");
-                      }
-                    }
-                  }}
-                  className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-xs transition-colors cursor-pointer text-center"
-                >
-                  บันทึกสเปรดชีต
-                </button>
-
-                <button
-                  id="settings-sync-now-btn"
-                  onClick={handleManualSync}
-                  disabled={syncStatus === "loading"}
-                  className={`px-4 py-2.5 rounded-lg text-white font-bold flex items-center justify-center gap-2 cursor-pointer shadow-xs transition-all text-xs ${syncStatus === "loading" ? "bg-slate-400 cursor-not-allowed" : "bg-emerald-600 hover:bg-emerald-500"}`}
-                >
-                  <RefreshCw className={`w-4 h-4 ${syncStatus === "loading" ? "animate-spin" : ""}`} />
-                  {syncStatus === "loading" ? "กำลังซิงค์..." : "ซิงค์ข้อมูลทันที"}
-                </button>
-              </div>
-            </div>
-
-            {/* Feedback alert Banner */}
-            {syncStatus === "success" && (
-              <div id="settings-sync-banner-success" className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg flex items-center gap-2">
-                <Check className="w-5 h-5 text-emerald-600 shrink-0" />
+          {/* ========================================================= */}
+          {/* Data Mapping Section (📊 ข้อมูลที่ต้องการเชื่อมต่อ) */}
+          {/* ========================================================= */}
+          <div className="border border-slate-200/80 rounded-xl bg-slate-50/50 overflow-hidden" id="cplex-data-mapping-section">
+            
+            {/* Collapsible Header */}
+            <button
+              type="button"
+              onClick={() => setIsDataMappingExpanded(!isDataMappingExpanded)}
+              className="w-full px-4 py-3 bg-slate-100/80 hover:bg-slate-100 flex items-center justify-between transition-colors text-left cursor-pointer"
+            >
+              <div className="flex items-center gap-2.5">
+                <div className="p-1.5 bg-indigo-100 text-indigo-700 rounded-lg">
+                  <Layers className="w-4 h-4" />
+                </div>
                 <div>
-                  <span className="font-bold block">ซิงค์สำเร็จ! (Sync Accomplished)</span>
-                  <span className="text-[10px] text-slate-500 leading-none">{syncMessage}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-bold text-slate-800">
+                      📊 ข้อมูลที่ต้องการเชื่อมต่อ (Data Mapping & Integration Fields)
+                    </span>
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-50 text-indigo-700 border border-indigo-200">
+                      {((cplexConfig.dataMapping || DEFAULT_CPLEX_DATA_MAPPINGS).filter(m => m.isEnabled)).length} / {(cplexConfig.dataMapping || DEFAULT_CPLEX_DATA_MAPPINGS).length} ฟิลด์เปิดใช้งาน
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-slate-500 mt-0.5">
+                    เลือกและตรวจสอบฟิลด์ข้อมูลที่ต้องการเชื่อมโยงระหว่าง CRM และระบบภายนอก (CPLEX) จัดกลุ่มเป็น 3 หมวดหมู่หลัก
+                  </p>
                 </div>
               </div>
-            )}
 
-            {syncStatus === "error" && (
-              <div id="settings-sync-banner-error" className="p-3 bg-red-50 border border-red-200 text-red-900 rounded-lg flex items-center gap-2">
-                <AlertTriangle className="w-5 h-5 text-red-600 shrink-0" />
-                <div>
-                  <span className="font-bold block">ซิงค์ไม่สำเร็จ (Sync Error)</span>
-                  <span className="text-[10px] text-slate-500 leading-none">{syncMessage}</span>
-                </div>
+              <div className="flex items-center gap-2 text-slate-400">
+                <span className="text-[11px] text-slate-500 font-medium hidden sm:inline">
+                  {isDataMappingExpanded ? "ย่อส่วนนี้" : "ขยายดูรายละเอียด"}
+                </span>
+                {isDataMappingExpanded ? (
+                  <ChevronUp className="w-4 h-4 text-slate-600" />
+                ) : (
+                  <ChevronDown className="w-4 h-4 text-slate-600" />
+                )}
               </div>
-            )}
+            </button>
 
+            {/* Collapsible Content */}
+            <AnimatePresence>
+              {isDataMappingExpanded && (
+                <motion.div
+                  initial={{ height: 0, opacity: 0 }}
+                  animate={{ height: "auto", opacity: 1 }}
+                  exit={{ height: 0, opacity: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="p-4 space-y-5 border-t border-slate-200/80 bg-white"
+                >
+                  
+                  {/* Info Notice */}
+                  <div className="p-3 bg-indigo-50/60 border border-indigo-100 rounded-xl text-xs text-indigo-900 flex items-start gap-2.5">
+                    <HelpCircle className="w-4 h-4 text-indigo-600 shrink-0 mt-0.5" />
+                    <div className="space-y-0.5 leading-relaxed">
+                      <span className="font-bold text-indigo-950">โครงสร้างเตรียมพร้อมสำหรับเชื่อมต่อ API ภายนอก:</span>
+                      <p className="text-[11px] text-indigo-800">
+                        ท่านสามารถเลือกเปิด-ปิดฟิลด์ข้อมูลที่ต้องการดึงหรือส่งต่อระหว่างระบบ CRM และระบบภายนอกได้ทันที โดยสถานะเริ่มต้นของฟิลด์ API จะแสดงเป็น <span className="font-mono font-bold text-indigo-950 bg-indigo-100/80 px-1.5 py-0.5 rounded border border-indigo-200">"รอกำหนด API Field"</span> เพื่อความพร้อมเมื่อเชื่อมต่อ API ในอนาคต
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* 3 Categories Grid */}
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                    
+                    {/* Category 1: Customer Info (ข้อมูลลูกค้า) */}
+                    {(() => {
+                      const items = (cplexConfig.dataMapping || DEFAULT_CPLEX_DATA_MAPPINGS).filter(i => i.category === "customer");
+                      const allEnabled = items.every(i => i.isEnabled);
+                      return (
+                        <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 space-y-3 flex flex-col justify-between">
+                          <div className="space-y-2.5">
+                            {/* Group Header */}
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-blue-500"></span>
+                                <h4 className="text-xs font-bold text-slate-800">
+                                  1. ข้อมูลลูกค้า (Customer Info)
+                                </h4>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleAllCategory("customer", !allEnabled)}
+                                className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                              >
+                                {allEnabled ? "ปิดทั้งหมด" : "เปิดทั้งหมด"}
+                              </button>
+                            </div>
+
+                            {/* Mapping Items List */}
+                            <div className="space-y-2">
+                              {items.map((item) => (
+                                <div
+                                  key={item.id}
+                                  className={`p-2.5 rounded-lg border transition-all ${
+                                    item.isEnabled
+                                      ? "bg-white border-slate-200 shadow-2xs"
+                                      : "bg-slate-100/60 border-slate-200/60 opacity-60"
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <label className="flex items-start gap-2 cursor-pointer select-none">
+                                      <input
+                                        type="checkbox"
+                                        checked={item.isEnabled}
+                                        onChange={() => handleToggleMappingItem(item.id)}
+                                        className="mt-0.5 w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                                      />
+                                      <div>
+                                        <div className="text-xs font-bold text-slate-800 leading-tight">
+                                          {item.crmFieldLabel}
+                                        </div>
+                                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                          CRM: <span className="text-slate-600 font-medium">{item.crmFieldKey}</span>
+                                        </div>
+                                      </div>
+                                    </label>
+
+                                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200/80 font-medium whitespace-nowrap">
+                                      {item.externalApiField || item.statusLabel || "รอกำหนด API Field"}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="pt-2 text-[10px] text-slate-400 text-right">
+                            {items.filter(i => i.isEnabled).length} จาก {items.length} รายการเปิดใช้
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Category 2: Sales Info (ข้อมูลยอดขาย) */}
+                    {(() => {
+                      const items = (cplexConfig.dataMapping || DEFAULT_CPLEX_DATA_MAPPINGS).filter(i => i.category === "sales");
+                      const allEnabled = items.every(i => i.isEnabled);
+                      return (
+                        <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 space-y-3 flex flex-col justify-between">
+                          <div className="space-y-2.5">
+                            {/* Group Header */}
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                                <h4 className="text-xs font-bold text-slate-800">
+                                  2. ข้อมูลยอดขาย (Sales Info)
+                                </h4>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleAllCategory("sales", !allEnabled)}
+                                className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                              >
+                                {allEnabled ? "ปิดทั้งหมด" : "เปิดทั้งหมด"}
+                              </button>
+                            </div>
+
+                            {/* Mapping Items List */}
+                            <div className="space-y-2">
+                              {items.map((item) => (
+                                <div
+                                  key={item.id}
+                                  className={`p-2.5 rounded-lg border transition-all ${
+                                    item.isEnabled
+                                      ? "bg-white border-slate-200 shadow-2xs"
+                                      : "bg-slate-100/60 border-slate-200/60 opacity-60"
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <label className="flex items-start gap-2 cursor-pointer select-none">
+                                      <input
+                                        type="checkbox"
+                                        checked={item.isEnabled}
+                                        onChange={() => handleToggleMappingItem(item.id)}
+                                        className="mt-0.5 w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                                      />
+                                      <div>
+                                        <div className="text-xs font-bold text-slate-800 leading-tight">
+                                          {item.crmFieldLabel}
+                                        </div>
+                                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                          CRM: <span className="text-slate-600 font-medium">{item.crmFieldKey}</span>
+                                        </div>
+                                      </div>
+                                    </label>
+
+                                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200/80 font-medium whitespace-nowrap">
+                                      {item.externalApiField || item.statusLabel || "รอกำหนด API Field"}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="pt-2 text-[10px] text-slate-400 text-right">
+                            {items.filter(i => i.isEnabled).length} จาก {items.length} รายการเปิดใช้
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Category 3: Shipping Info (ข้อมูลการจัดส่ง) */}
+                    {(() => {
+                      const items = (cplexConfig.dataMapping || DEFAULT_CPLEX_DATA_MAPPINGS).filter(i => i.category === "shipping");
+                      const allEnabled = items.every(i => i.isEnabled);
+                      return (
+                        <div className="bg-slate-50/70 border border-slate-200 rounded-xl p-3.5 space-y-3 flex flex-col justify-between">
+                          <div className="space-y-2.5">
+                            {/* Group Header */}
+                            <div className="flex items-center justify-between pb-2 border-b border-slate-200">
+                              <div className="flex items-center gap-1.5">
+                                <span className="w-2 h-2 rounded-full bg-indigo-500"></span>
+                                <h4 className="text-xs font-bold text-slate-800">
+                                  3. ข้อมูลการจัดส่ง (Shipping Info)
+                                </h4>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleToggleAllCategory("shipping", !allEnabled)}
+                                className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 cursor-pointer"
+                              >
+                                {allEnabled ? "ปิดทั้งหมด" : "เปิดทั้งหมด"}
+                              </button>
+                            </div>
+
+                            {/* Mapping Items List */}
+                            <div className="space-y-2">
+                              {items.map((item) => (
+                                <div
+                                  key={item.id}
+                                  className={`p-2.5 rounded-lg border transition-all ${
+                                    item.isEnabled
+                                      ? "bg-white border-slate-200 shadow-2xs"
+                                      : "bg-slate-100/60 border-slate-200/60 opacity-60"
+                                  }`}
+                                >
+                                  <div className="flex items-start justify-between gap-2">
+                                    <label className="flex items-start gap-2 cursor-pointer select-none">
+                                      <input
+                                        type="checkbox"
+                                        checked={item.isEnabled}
+                                        onChange={() => handleToggleMappingItem(item.id)}
+                                        className="mt-0.5 w-3.5 h-3.5 text-indigo-600 rounded border-slate-300 focus:ring-indigo-500"
+                                      />
+                                      <div>
+                                        <div className="text-xs font-bold text-slate-800 leading-tight">
+                                          {item.crmFieldLabel}
+                                        </div>
+                                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                                          CRM: <span className="text-slate-600 font-medium">{item.crmFieldKey}</span>
+                                        </div>
+                                      </div>
+                                    </label>
+
+                                    <span className="text-[10px] px-2 py-0.5 rounded-md bg-amber-50 text-amber-800 border border-amber-200/80 font-medium whitespace-nowrap">
+                                      {item.externalApiField || item.statusLabel || "รอกำหนด API Field"}
+                                    </span>
+                                  </div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+
+                          <div className="pt-2 text-[10px] text-slate-400 text-right">
+                            {items.filter(i => i.isEnabled).length} จาก {items.length} รายการเปิดใช้
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                  </div>
+
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+          </div>
+
+        </div>
+
+        {/* 1. Excel Export Center (2/3 cols) */}
+        <div id="settings-excel-export-card" className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs lg:col-span-2 space-y-5">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
+                <FileSpreadsheet className="w-5 h-5" />
+              </div>
+              <div>
+                <h3 className="text-slate-800 font-bold text-sm">ส่งออกข้อมูลเป็น Excel (Export Leads to Excel .xlsx)</h3>
+                <p className="text-[10px] text-slate-400">
+                  ดาวน์โหลดข้อมูลลูกค้าทั้งหมด พร้อม Tags, การ Follow-up, ประวัติการโทร, ข้อมูลเอกสาร และรหัสลูกค้า
+                </p>
+              </div>
+            </div>
+
+            <span className="px-3 py-1 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded-full text-xs font-bold font-mono">
+              พร้อมส่งออก {exportTargetLeads.length} / {leadsCount} ราย
+            </span>
+          </div>
+
+          {exportSuccessMsg && (
+            <div className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-xl text-xs font-bold flex items-center gap-2">
+              <Check className="w-4 h-4 text-emerald-600 shrink-0" />
+              <span>{exportSuccessMsg}</span>
+            </div>
+          )}
+
+          {/* Export Filter Controls */}
+          <div className="bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-3 text-xs">
+            <span className="text-slate-500 font-bold block uppercase tracking-wider text-[10px]">
+              ตัวกรองข้อมูลสำหรับส่งออก (Export Filters):
+            </span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="text-slate-600 font-semibold block text-[11px] mb-1">สถานะ Pipeline</label>
+                <select
+                  value={exportStatus}
+                  onChange={(e) => setExportStatus(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="all">ทุกสถานะ ({leads.length} ราย)</option>
+                  {Object.entries(StatusLabels).map(([key, label]) => (
+                    <option key={key} value={key}>{label}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-slate-600 font-semibold block text-[11px] mb-1">เซลส์ผู้รับผิดชอบ</label>
+                <select
+                  value={exportSalesperson}
+                  onChange={(e) => setExportSalesperson(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="all">ทุกคนในทีม</option>
+                  {salespersons.map(sp => (
+                    <option key={sp} value={sp}>{sp}</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="text-slate-600 font-semibold block text-[11px] mb-1">กรองตาม Tag</label>
+                <select
+                  value={exportTag}
+                  onChange={(e) => setExportTag(e.target.value)}
+                  className="w-full bg-white border border-slate-200 rounded-lg p-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                >
+                  <option value="all">ทุก Tag</option>
+                  {allExistingTags.map(tag => (
+                    <option key={tag} value={tag}>{tag}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {/* Export Action Strip */}
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-1">
+            <div className="text-xs text-slate-500">
+              ไฟล์ Excel (.xlsx) รองรับภาษาไทยสมบูรณ์ สามารถเปิดด้วย Microsoft Excel, Numbers หรือ Google Sheets ได้ทันที
+            </div>
+
+            <button
+              id="export-excel-leads-btn"
+              type="button"
+              onClick={handlePerformExcelExport}
+              disabled={exportTargetLeads.length === 0}
+              className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center gap-2 transition-all shadow-xs cursor-pointer shrink-0"
+            >
+              <Download className="w-4 h-4" />
+              <span>ดาวน์โหลดไฟล์ Excel ({exportTargetLeads.length} รายการ)</span>
+            </button>
           </div>
         </div>
 
-        {/* แก้ไขข้อมูลบัญชีผู้ใช้ส่วนตัว (Your Account Profile) */}
-        <div id="settings-profile-card" className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs lg:col-span-2 space-y-5">
+        {/* 2. System Status (1/3 col) */}
+        <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+          <div className="flex items-center gap-2 pb-3 border-b border-slate-100">
+            <ShieldCheck className="w-5 h-5 text-blue-600" />
+            <h3 className="text-slate-800 font-bold text-sm">สถานะระบบ (System Info)</h3>
+          </div>
+
+          <div className="space-y-3 text-xs">
+            <div className="flex justify-between items-center p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+              <span className="text-slate-500">ฐานข้อมูล (Database)</span>
+              <span className="font-bold text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-200">
+                Cloud Firestore (Online)
+              </span>
+            </div>
+
+            <div className="flex justify-between items-center p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+              <span className="text-slate-500">จำนวน Lead ในระบบ</span>
+              <span className="font-mono font-bold text-slate-800">{leadsCount} ราย</span>
+            </div>
+
+            <div className="flex justify-between items-center p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+              <span className="text-slate-500">พนักงานขาย</span>
+              <span className="font-bold text-slate-800">{salespersons.length} คน</span>
+            </div>
+
+            <div className="flex justify-between items-center p-2.5 bg-slate-50 rounded-xl border border-slate-100">
+              <span className="text-slate-500">โซนเวลา (Timezone)</span>
+              <span className="font-bold text-slate-800">Asia/Bangkok (GMT+7)</span>
+            </div>
+          </div>
+        </div>
+
+        {/* 3. Account Profile Card (2/3 cols) */}
+        <div id="settings-profile-card" className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs lg:col-span-2 space-y-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center font-bold">
@@ -533,7 +1029,7 @@ export default function SettingsView({
                   required
                   value={selfNameInput}
                   onChange={(e) => setSelfNameInput(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white text-slate-700 font-bold"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-700 font-bold"
                   placeholder="ชื่อจริงของคุณ หรือ ชื่อเล่นพนักงานขาย"
                 />
               </div>
@@ -542,7 +1038,7 @@ export default function SettingsView({
                   id="settings-profile-save-btn"
                   type="submit"
                   disabled={selfNameInput.trim() === currentUser}
-                  className={`w-full py-2.5 rounded-lg text-white font-bold text-xs transition-colors cursor-pointer ${selfNameInput.trim() === currentUser ? "bg-slate-300 cursor-not-allowed text-slate-500" : "bg-blue-600 hover:bg-blue-500"}`}
+                  className={`w-full py-2.5 rounded-xl text-white font-bold text-xs transition-colors cursor-pointer ${selfNameInput.trim() === currentUser ? "bg-slate-300 cursor-not-allowed text-slate-500" : "bg-blue-600 hover:bg-blue-500"}`}
                 >
                   บันทึกการเปลี่ยนแปลง
                 </button>
@@ -551,8 +1047,8 @@ export default function SettingsView({
           </form>
         </div>
 
-        {/* ตั้งค่ารหัสผ่านเข้าใช้งานส่วนตัว (Change Your Password Card) */}
-        <div id="settings-password-card" className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs lg:col-span-2 space-y-5">
+        {/* 4. Change Password Card (2/3 cols) */}
+        <div id="settings-password-card" className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs lg:col-span-2 space-y-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
               <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
@@ -569,7 +1065,7 @@ export default function SettingsView({
           </div>
 
           {passMsg && (
-            <div className={`p-3 rounded-lg text-xs font-bold border ${passMsg.isError ? "bg-rose-50 text-rose-800 border-rose-200" : "bg-emerald-50 text-emerald-800 border-emerald-200"}`}>
+            <div className={`p-3 rounded-xl text-xs font-bold border ${passMsg.isError ? "bg-rose-50 text-rose-800 border-rose-200" : "bg-emerald-50 text-emerald-800 border-emerald-200"}`}>
               {passMsg.text}
             </div>
           )}
@@ -584,7 +1080,7 @@ export default function SettingsView({
                   value={currentPassInput}
                   onChange={(e) => setCurrentPassInput(e.target.value)}
                   placeholder="รหัสเดิม (ค่าเริ่มต้น 1234)"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-700 font-bold"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white text-slate-700 font-bold"
                 />
               </div>
 
@@ -596,7 +1092,7 @@ export default function SettingsView({
                   value={newPassInput}
                   onChange={(e) => setNewPassInput(e.target.value)}
                   placeholder="รหัสผ่านใหม่ (อย่างน้อย 4 ตัว)"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-700 font-bold"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white text-slate-700 font-bold"
                 />
               </div>
 
@@ -608,7 +1104,7 @@ export default function SettingsView({
                   value={confirmPassInput}
                   onChange={(e) => setConfirmPassInput(e.target.value)}
                   placeholder="พิมพ์รหัสใหม่อีกครั้ง"
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-1 focus:ring-emerald-500 focus:bg-white text-slate-700 font-bold"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:bg-white text-slate-700 font-bold"
                 />
               </div>
             </div>
@@ -617,7 +1113,7 @@ export default function SettingsView({
               <button
                 type="submit"
                 disabled={isUpdatingPass || !currentPassInput || !newPassInput || !confirmPassInput}
-                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition-all shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
+                className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl transition-all shadow-xs cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-1.5"
               >
                 {isUpdatingPass ? (
                   <>
@@ -635,8 +1131,8 @@ export default function SettingsView({
           </form>
         </div>
 
-        {/* จัดการชื่อพนักงานขาย / เซลส์ (Salesperson Management Card) */}
-        <div id="settings-salespersons-card" className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs lg:col-span-2 space-y-5">
+        {/* 5. Salesperson Management Card (2/3 cols) */}
+        <div id="settings-salespersons-card" className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs lg:col-span-2 space-y-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
               <User className="w-5 h-5 text-blue-600" />
@@ -652,14 +1148,12 @@ export default function SettingsView({
             )}
           </div>
 
-          {/* Feedback message banner */}
           {salespersonMessage && (
-            <div id="salesperson-msg-banner" className="p-2.5 px-4 bg-blue-50 border border-blue-100 text-blue-800 rounded-lg text-xs font-semibold animate-fade-in flex items-center gap-2">
+            <div id="salesperson-msg-banner" className="p-2.5 px-4 bg-blue-50 border border-blue-100 text-blue-800 rounded-xl text-xs font-semibold flex items-center gap-2">
               <span className="block">{salespersonMessage}</span>
             </div>
           )}
 
-          {/* Inline Add Form (Only allowed for Phere) */}
           {currentUser === managerName ? (
             <form onSubmit={handleAddSalesperson} className="flex gap-2.5">
               <input 
@@ -669,24 +1163,23 @@ export default function SettingsView({
                 placeholder="กรอกชื่อเซลส์คนใหม่ เช่น Nalin, Beer..."
                 value={newSalespersonName}
                 onChange={(e) => setNewSalespersonName(e.target.value)}
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white text-slate-700"
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-700"
               />
               <button 
                 id="settings-salesperson-add-submit"
                 type="submit"
-                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
+                className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>เพิ่มรายชื่อ</span>
               </button>
             </form>
           ) : (
-            <div className="p-3 bg-amber-50/50 border border-amber-100 text-amber-800 rounded-lg text-xs leading-relaxed">
+            <div className="p-3 bg-amber-50/50 border border-amber-100 text-amber-800 rounded-xl text-xs leading-relaxed">
               ⚠️ เฉพาะผู้จัดการสูงสุด <strong>{managerName}</strong> เท่านั้นที่มีสิทธิ์เพิ่มรายชื่อพนักงานขายในระบบได้
             </div>
           )}
 
-          {/* Salesperson list */}
           <div className="space-y-2">
             <label className="text-slate-500 font-bold text-xs block">รายชื่อเซลส์ปัจจุบัน ({salespersons.length} คน)</label>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" id="settings-salesperson-list">
@@ -695,74 +1188,77 @@ export default function SettingsView({
                 return (
                   <div 
                     key={sp} 
-                    className={`flex items-center justify-between p-3 rounded-lg text-xs transition-all ${isEditing ? "bg-blue-50/70 border border-blue-200" : "bg-slate-50 border border-slate-100"}`}
+                    className={`flex items-center justify-between p-3 rounded-xl text-xs transition-all ${isEditing ? "bg-blue-50/70 border border-blue-200" : "bg-slate-50 border border-slate-100"}`}
                   >
                     {isEditing ? (
-                      <div className="flex items-center gap-2 w-full">
+                      <div className="flex items-center gap-1.5 flex-1 mr-2">
                         <input
                           type="text"
                           value={editingNameInput}
                           onChange={(e) => setEditingNameInput(e.target.value)}
-                          className="flex-1 bg-white border border-slate-200 rounded px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-blue-500 font-bold text-slate-700 text-xs"
-                          placeholder="ระบุชื่อใหม่"
+                          className="flex-1 bg-white border border-blue-300 rounded px-2 py-1 text-xs font-bold text-slate-800 focus:outline-none focus:ring-1 focus:ring-blue-500"
                           autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") handleSaveRename(sp);
+                            if (e.key === "Escape") setEditingSp(null);
+                          }}
                         />
-                        <div className="flex items-center gap-1 shrink-0">
-                          <button
-                            type="button"
-                            onClick={() => handleSaveRename(sp)}
-                            className="p-1 text-emerald-600 hover:bg-emerald-50 rounded transition-all cursor-pointer"
-                            title="บันทึก"
-                          >
-                            <Check className="w-4 h-4" />
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setEditingSp(null)}
-                            className="p-1 text-slate-400 hover:bg-slate-100 rounded transition-all cursor-pointer"
-                            title="ยกเลิก"
-                          >
-                            <X className="w-4 h-4" />
-                          </button>
-                        </div>
+                        <button
+                          type="button"
+                          onClick={() => handleSaveRename(sp)}
+                          className="p-1 bg-blue-600 text-white rounded hover:bg-blue-500 transition-colors cursor-pointer"
+                        >
+                          <Check className="w-3 h-3" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => setEditingSp(null)}
+                          className="p-1 bg-slate-200 text-slate-600 rounded hover:bg-slate-300 transition-colors cursor-pointer"
+                        >
+                          <X className="w-3 h-3" />
+                        </button>
                       </div>
                     ) : (
-                      <>
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-6 h-6 rounded-full bg-blue-50 text-blue-600 flex items-center justify-center font-bold text-[10px]">
-                            {sp.substring(0, 2)}
-                          </div>
-                          <span className="font-bold text-slate-700">
-                            {sp} {sp === managerName && "👑"} {sp === currentUser && "(คุณ)"}
+                      <div className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-blue-500" />
+                        <span className="font-bold text-slate-800">{sp}</span>
+                        {sp === managerName && (
+                          <span className="text-[9px] bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded font-bold">
+                            Manager
                           </span>
-                        </div>
-                        <div className="flex items-center gap-1 shrink-0">
-                          {currentUser === managerName && (
-                            <>
-                              <button 
-                                type="button"
-                                onClick={() => {
-                                  setEditingSp(sp);
-                                  setEditingNameInput(sp);
-                                }}
-                                className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-all cursor-pointer"
-                                title={`เปลี่ยนชื่อ ${sp}`}
-                              >
-                                <Edit className="w-3.5 h-3.5" />
-                              </button>
-                              <button 
-                                id={`delete-salesperson-btn-${sp}`}
-                                type="button"
-                                onClick={() => handleDeleteSalesperson(sp)}
-                                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer"
-                                title={`ลบรายชื่อ ${sp}`}
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                            </>
-                          )}
-                        </div>
-                      </>
+                        )}
+                        {sp === currentUser && (
+                          <span className="text-[9px] bg-blue-100 text-blue-800 px-1.5 py-0.5 rounded font-bold">
+                            (คุณ)
+                          </span>
+                        )}
+                      </div>
+                    )}
+
+                    {!isEditing && currentUser === managerName && (
+                      <div className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditingSp(sp);
+                            setEditingNameInput(sp);
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors cursor-pointer"
+                          title={`แก้ไขชื่อ ${sp}`}
+                        >
+                          <Edit className="w-3.5 h-3.5" />
+                        </button>
+                        {sp !== managerName && (
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteSalesperson(sp)}
+                            className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                            title={`ลบ ${sp}`}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
                     )}
                   </div>
                 );
@@ -771,194 +1267,118 @@ export default function SettingsView({
           </div>
         </div>
 
-        {/* จัดการแคมเปญการตลาด (Marketing Campaign Management Card) */}
-        <div id="settings-campaigns-card" className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs lg:col-span-2 space-y-5">
+        {/* 6. Campaign Management Card (2/3 cols) */}
+        <div id="settings-campaigns-card" className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs lg:col-span-2 space-y-5">
           <div className="flex items-center justify-between border-b border-slate-100 pb-3">
             <div className="flex items-center gap-2">
-              <Megaphone className="w-5 h-5 text-indigo-600" />
+              <div className="w-8 h-8 rounded-full bg-purple-100 text-purple-700 flex items-center justify-center font-bold">
+                <Megaphone className="w-4 h-4" />
+              </div>
               <div>
-                <h3 className="text-slate-800 font-bold text-sm">จัดการแคมเปญการตลาด (Campaign Management)</h3>
-                <p className="text-[10px] text-slate-400">เพิ่ม (+) หรือ ลบ (-) แคมเปญโฆษณา/การตลาดสำหรับบันทึกช่องทางที่มาของลูกค้า</p>
+                <h3 className="text-slate-800 font-bold text-sm">จัดการแคมเปญการตลาด (Marketing Campaigns)</h3>
+                <p className="text-[10px] text-slate-400">เพิ่มหรือลบชื่อแคมเปญที่ทีมใช้ระบุที่มาของลูกค้า</p>
               </div>
             </div>
-            <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 border border-indigo-100 rounded-full text-[10px] font-bold">
-              📢 ทั้งหมด {campaigns.length} แคมเปญ
-            </span>
           </div>
 
-          {/* Feedback message banner */}
           {campaignMessage && (
-            <div id="campaign-msg-banner" className="p-2.5 px-4 bg-indigo-50 border border-indigo-100 text-indigo-900 rounded-lg text-xs font-semibold animate-fade-in flex items-center gap-2">
-              <span className="block">{campaignMessage}</span>
+            <div className="p-2.5 px-4 bg-purple-50 border border-purple-100 text-purple-800 rounded-xl text-xs font-semibold">
+              {campaignMessage}
             </div>
           )}
 
-          {/* Add Form */}
           <form onSubmit={handleAddNewCampaign} className="flex gap-2.5">
             <input 
-              id="settings-campaign-add-input"
               type="text"
-              required
-              placeholder="กรอกชื่อแคมเปญใหม่ เช่น แคมเปญ 8.8 Sales Shock, TikTok Live..."
+              placeholder="กรอกชื่อแคมเปญใหม่ เช่น แคมเปญ 9.9 Super Sale..."
               value={newCampaignInput}
               onChange={(e) => setNewCampaignInput(e.target.value)}
-              className="flex-1 bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 focus:bg-white text-slate-700 font-medium"
+              className="flex-1 bg-slate-50 border border-slate-200 rounded-xl p-2.5 text-xs focus:outline-none focus:ring-2 focus:ring-purple-500 focus:bg-white text-slate-700"
             />
             <button 
-              id="settings-campaign-add-submit"
               type="submit"
-              className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white font-bold rounded-lg text-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0 shadow-xs"
+              disabled={!newCampaignInput.trim()}
+              className="px-4 py-2.5 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 transition-colors cursor-pointer shrink-0"
             >
               <Plus className="w-3.5 h-3.5" />
-              <span>เพิ่มแคมเปญ (+)</span>
+              <span>เพิ่มแคมเปญ</span>
             </button>
           </form>
 
-          {/* Campaigns list */}
           <div className="space-y-2">
-            <label className="text-slate-500 font-bold text-xs block">รายชื่อแคมเปญการตลาดเปิดใช้งานอยู่</label>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2" id="settings-campaign-list">
-              {campaigns.map((camp) => {
-                const count = leads.filter(l => l.campaign === camp).length;
-                return (
-                  <div 
-                    key={camp} 
-                    className="flex items-center justify-between p-3 bg-slate-50 border border-slate-100 rounded-lg text-xs hover:border-indigo-200 transition-all group"
+            <label className="text-slate-500 font-bold text-xs block">รายการแคมเปญในระบบ ({campaigns.length} แคมเปญ)</label>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {campaigns.map((camp) => (
+                <div 
+                  key={camp} 
+                  className="flex items-center justify-between p-3 rounded-xl text-xs bg-slate-50 border border-slate-100"
+                >
+                  <span className="font-semibold text-slate-800">{camp}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteCampaignItem(camp)}
+                    className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors cursor-pointer"
+                    title={`ลบแคมเปญ ${camp}`}
                   >
-                    <div className="flex items-center gap-2 overflow-hidden">
-                      <Megaphone className="w-3.5 h-3.5 text-indigo-500 shrink-0" />
-                      <span className="font-bold text-slate-800 truncate">{camp}</span>
-                      {count > 0 && (
-                        <span className="px-2 py-0.5 bg-indigo-100 text-indigo-800 font-bold text-[10px] rounded-full shrink-0 flex items-center gap-1">
-                          <Users className="w-2.5 h-2.5" /> {count} ราย
-                        </span>
-                      )}
-                    </div>
-
-                    <button 
-                      type="button"
-                      onClick={() => handleDeleteCampaignItem(camp)}
-                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-all cursor-pointer shrink-0 opacity-80 group-hover:opacity-100"
-                      title={`ลบแคมเปญ "${camp}"`}
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Sync Log Viewer (1/3 cols) */}
-        <div id="settings-sync-logs-card" className="bg-white p-5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between">
-          <div className="space-y-3">
-            <div className="flex items-center gap-1.5 border-b border-slate-100 pb-2">
-              <CloudLightning className="w-4 h-4 text-emerald-500" />
-              <h3 className="text-slate-800 font-bold text-xs uppercase tracking-wider">ประวัติประมวลผล (Console Log)</h3>
-            </div>
-
-            <div className="bg-slate-900 text-slate-300 font-mono p-3 rounded-lg text-[9px] h-60 overflow-y-auto space-y-1.5 border border-slate-950">
-              {syncLogs.map(log => (
-                <div key={log.id} className="leading-normal flex items-start gap-1">
-                  <span className="text-slate-500 shrink-0">[{log.time}]</span>
-                  <span className={log.type === "success" ? "text-emerald-400" : log.type === "error" ? "text-rose-400" : "text-sky-300"}>
-                    {log.msg}
-                  </span>
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
                 </div>
               ))}
             </div>
           </div>
+        </div>
 
-          <div className="pt-3 border-t border-slate-100 text-[10px] text-slate-400 flex items-center justify-between">
-            <span>ฐานข้อมูล: crm_store.json</span>
-            <span className="text-emerald-600 font-bold flex items-center gap-1">🟢 กำลังทำงาน</span>
+        {/* 7. System Version & Updates Card */}
+        <div id="settings-system-version-card" className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs lg:col-span-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 text-blue-600 border border-blue-100 flex items-center justify-center font-bold">
+              <RefreshCw className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="text-slate-800 font-bold text-sm">การอัปเดตระบบ (System Version & Updates)</h3>
+                <span className="px-2 py-0.5 bg-emerald-50 text-emerald-700 border border-emerald-200 rounded text-[10px] font-bold">
+                  Online Live
+                </span>
+              </div>
+              <p className="text-xs text-slate-500 mt-0.5">
+                ระบบเชื่อมต่อแบบเรียลไทม์ และจะแจ้งเตือนป๊อปอัปด้านล่างทันทีเมื่อมีเวอร์ชันใหม่พร้อมให้กด "อัปเดตเลย"
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2.5 w-full sm:w-auto justify-end">
+            <button
+              type="button"
+              id="check-system-update-btn"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent("crm:system-update-available", {
+                  detail: { reason: "ตรวจสอบพบแพตช์ระบบล่าสุด พร้อมใช้งานทันที" }
+                }));
+              }}
+              className="px-4 py-2 bg-slate-900 hover:bg-blue-600 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center gap-2 cursor-pointer"
+            >
+              <RefreshCw className="w-3.5 h-3.5" />
+              <span>ตรวจสอบและจำลองการอัปเดต</span>
+            </button>
           </div>
         </div>
 
       </div>
 
-      {/* Google Apps Script Modal */}
-      {showScriptModal && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50">
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            animate={{ opacity: 1, scale: 1 }}
-            className="bg-white rounded-2xl border border-slate-200 shadow-2xl max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto"
-          >
-            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
-              <div className="flex items-center gap-2">
-                <FileSpreadsheet className="w-6 h-6 text-emerald-600" />
-                <div>
-                  <h3 className="text-base font-bold text-slate-800">โค้ด Apps Script สำหรับเชื่อมต่อ Google Sheets</h3>
-                  <p className="text-xs text-slate-500">ทำตามขั้นตอนง่ายๆ 3 ข้อเพื่อรับข้อมูลจาก CRM อัตโนมัติ</p>
-                </div>
-              </div>
-              <button
-                type="button"
-                onClick={() => setShowScriptModal(false)}
-                className="p-1 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-all cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
+      {/* CPLEX Connection & Configuration Modal */}
+      <CPLEXConnectionModal
+        isOpen={showCplexModal}
+        onClose={() => setShowCplexModal(false)}
+        onConfigSaved={(cfg) => setCplexConfig(cfg)}
+      />
 
-            {/* Step-by-step Guide */}
-            <div className="space-y-2 text-xs text-slate-700 bg-slate-50 p-4 rounded-xl border border-slate-200">
-              <span className="font-bold text-slate-900 block">📋 วิธีติดตั้งใน 1 นาที:</span>
-              <ol className="list-decimal list-inside space-y-1 text-slate-600 leading-relaxed">
-                <li>เปิดไฟล์ <strong>Google Sheet</strong> ของคุณ</li>
-                <li>ไปที่เมนูด้านบน <strong>ส่วนขยาย (Extensions)</strong> &rarr; <strong>Apps Script</strong></li>
-                <li>ลบโค้ดเดิมออกทั้งหมด แล้ววางโค้ดด้านล่างนี้ลงไป</li>
-                <li>กด <strong>ทำให้ใช้งานได้ (Deploy)</strong> &rarr; <strong>การทำให้ใช้งานได้รายการใหม่ (New deployment)</strong></li>
-                <li>เลือกประเภท <strong>เว็บแอป (Web app)</strong> และตั้งค่าสิทธิ์การเข้าถึงเป็น <strong>ทุกคน (Anyone)</strong></li>
-                <li>กด Deploy แล้วคัดลอก Web App URL มาวางในช่อง <strong>Google Apps Script Web App URL</strong> ในหน้านี้</li>
-              </ol>
-            </div>
+      {/* CPLEX API Logs & Debugging Modal */}
+      <CPLEXLogsModal
+        isOpen={showCplexLogsModal}
+        onClose={() => setShowCplexLogsModal(false)}
+      />
 
-            {/* Code Box */}
-            <div className="relative">
-              <div className="flex items-center justify-between bg-slate-900 text-slate-300 px-4 py-2 rounded-t-lg text-xs font-mono">
-                <span>Google Apps Script (doPost.gs)</span>
-                <button
-                  type="button"
-                  onClick={() => {
-                    navigator.clipboard.writeText(GOOGLE_APPS_SCRIPT_CODE);
-                    setCopiedCode(true);
-                    setTimeout(() => setCopiedCode(false), 3000);
-                  }}
-                  className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded text-[11px] font-bold flex items-center gap-1 transition-all cursor-pointer"
-                >
-                  {copiedCode ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                  <span>{copiedCode ? "คัดลอกเรียบร้อย!" : "คัดลอกโค้ด"}</span>
-                </button>
-              </div>
-              <pre className="bg-slate-950 text-emerald-400 font-mono text-[11px] p-4 rounded-b-lg overflow-x-auto max-h-60 leading-relaxed border border-slate-800">
-                {GOOGLE_APPS_SCRIPT_CODE}
-              </pre>
-            </div>
-
-            <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-              <button
-                type="button"
-                onClick={() => exportLeadsToCSV(leads)}
-                className="px-4 py-2 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 text-emerald-800 font-bold rounded-xl text-xs flex items-center gap-1.5 transition-all cursor-pointer"
-              >
-                <Download className="w-4 h-4" />
-                <span>หรือดาวน์โหลด CSV สำหรับเปิดบน Sheets</span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowScriptModal(false)}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs transition-all cursor-pointer"
-              >
-                เสร็จสิ้น / ปิดหน้าต่าง
-              </button>
-            </div>
-          </motion.div>
-        </div>
-      )}
     </div>
   );
 }

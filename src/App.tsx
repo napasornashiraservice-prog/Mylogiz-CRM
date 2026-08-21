@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from "react";
-import { Lead, LeadStatus, TimelineItem } from "./types";
+import { Lead, LeadStatus, StatusLabels, TimelineItem, SalesKpiStore, DEFAULT_KPI_TARGETS, Note, NotePriority } from "./types";
 import { generateNextCustomerCode } from "./utils/codeGenerator";
 import DashboardView from "./components/DashboardView";
 import LeadsView from "./components/LeadsView";
 import FollowUpView from "./components/FollowUpView";
 import DocumentsView from "./components/DocumentsView";
 import CustomersView from "./components/CustomersView";
-import ReportsView from "./components/ReportsView";
 import NotesView from "./components/NotesView";
 import SettingsView from "./components/SettingsView";
 import LeadDetailsModal from "./components/LeadDetailsModal";
 import LoginView from "./components/LoginView";
+import UpdateNotification from "./components/UpdateNotification";
 import { 
   LayoutDashboard, Users, PhoneCall, FileText, Settings, 
   UserCheck, BarChart3, MessageSquare, LogOut, Menu, 
@@ -67,6 +67,7 @@ export default function App() {
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [pheresFilterMode, setPheresFilterMode] = useState<"all" | "own">("all");
   const [userPasswords, setUserPasswords] = useState<Record<string, string>>({});
+  const [kpiTargets, setKpiTargets] = useState<SalesKpiStore>(DEFAULT_KPI_TARGETS);
   const [sheetsConfig, setSheetsConfig] = useState<{
     sheetUrl: string;
     sheetName?: string;
@@ -80,6 +81,16 @@ export default function App() {
     isEnabled: true,
     lastSyncedAt: null
   });
+
+  const handleSaveKpiTargets = async (updated: SalesKpiStore) => {
+    setKpiTargets(updated);
+    try {
+      await setDoc(doc(db, "config", "sales_kpi"), { targets: cleanFirestorePayload(updated) });
+      return true;
+    } catch (err) {
+      console.error("Failed to save KPI targets to Firestore", err);
+    }
+  };
 
   const handleUpdatePassword = async (salespersonName: string, newPass: string) => {
     try {
@@ -297,12 +308,31 @@ export default function App() {
       }
     );
 
+    // 6. Listen to sales_kpi targets document
+    const unsubscribeKpi = onSnapshot(
+      doc(db, "config", "sales_kpi"),
+      (snapshot) => {
+        if (snapshot.exists()) {
+          const data = snapshot.data();
+          if (data && data.targets) {
+            setKpiTargets(data.targets);
+          }
+        } else {
+          setDoc(doc(db, "config", "sales_kpi"), { targets: DEFAULT_KPI_TARGETS });
+        }
+      },
+      (err) => {
+        console.error("Sales KPI targets listener error:", err);
+      }
+    );
+
     return () => {
       unsubscribeLeads();
       unsubscribeSp();
       unsubscribeSheets();
       unsubscribePasswords();
       unsubscribeCampaigns();
+      unsubscribeKpi();
     };
   }, []);
 
@@ -365,8 +395,72 @@ export default function App() {
     }
   };
 
-  // 2. UPDATE LEAD STATUS (Quick change)
-  const handleUpdateLeadStatus = async (id: string, newStatus: LeadStatus) => {
+  // 1.5. BATCH ADD MULTIPLE LEADS (EXCEL IMPORT)
+  const handleBatchAddLeads = async (
+    leadsDataList: Omit<Lead, "id" | "createdAt" | "updatedAt" | "timeline" | "calls" | "files">[]
+  ): Promise<{ success: boolean; count: number }> => {
+    setErrorMsg(null);
+    if (!leadsDataList || leadsDataList.length === 0) return { success: true, count: 0 };
+
+    try {
+      // Process in batches of 400 (Firestore max batch is 500)
+      const chunkSize = 400;
+      let totalCreated = 0;
+
+      for (let i = 0; i < leadsDataList.length; i += chunkSize) {
+        const chunk = leadsDataList.slice(i, i + chunkSize);
+        const batch = writeBatch(db);
+
+        chunk.forEach(item => {
+          const id = `id_${Math.random().toString(36).substring(2, 11)}`;
+          const nowStr = new Date().toISOString();
+          const newLead: Lead = {
+            ...item,
+            id,
+            createdAt: nowStr,
+            updatedAt: nowStr,
+            notes: item.notes || [],
+            timeline: [
+              {
+                id: `id_${Math.random().toString(36).substring(2, 11)}`,
+                title: "นำเข้า Lead จาก Excel",
+                description: `นำเข้าระบบพร้อมกันหลายรายการ โดย ${item.salesPerson || "ระบบ"}`,
+                date: nowStr,
+                type: "system"
+              }
+            ],
+            calls: [],
+            files: [],
+            documents: item.documents || { idCard: false, bookBank: false, companyReg: false, taxDoc: false, storefrontPhoto: false }
+          };
+
+          const cleaned = cleanFirestorePayload(newLead);
+          batch.set(doc(db, "leads", id), cleaned);
+          totalCreated++;
+        });
+
+        await batch.commit();
+      }
+
+      return { success: true, count: totalCreated };
+    } catch (err: any) {
+      console.error("Failed to batch add leads:", err);
+      setErrorMsg("เกิดข้อผิดพลาดในการนำเข้าข้อมูล Lead จำนวนมากไปยัง Cloud Firestore");
+      return { success: false, count: 0 };
+    }
+  };
+
+  // 2. UPDATE LEAD STATUS (Quick change with Reason support)
+  const handleUpdateLeadStatus = async (
+    id: string, 
+    newStatus: LeadStatus,
+    reasonData?: {
+      wonReason?: string;
+      wonReasonOther?: string;
+      lostReason?: string;
+      lostReasonOther?: string;
+    }
+  ) => {
     setErrorMsg(null);
     const lead = leads.find(l => l.id === id);
     if (!lead) return;
@@ -377,12 +471,25 @@ export default function App() {
       let activationDate = lead.activationDate || null;
       let customerCode = lead.customerCode || null;
       let firstShipmentDate = lead.firstShipmentDate || null;
+      let lostDate = lead.lostDate || null;
+
+      const wonReasonToSave = reasonData?.wonReason !== undefined ? reasonData.wonReason : lead.wonReason;
+      const wonReasonOtherToSave = reasonData?.wonReasonOther !== undefined ? reasonData.wonReasonOther : lead.wonReasonOther;
+      const lostReasonToSave = reasonData?.lostReason !== undefined ? reasonData.lostReason : lead.lostReason;
+      const lostReasonOtherToSave = reasonData?.lostReasonOther !== undefined ? reasonData.lostReasonOther : lead.lostReasonOther;
 
       if (newStatus !== lead.status) {
+        let reasonSuffix = "";
+        if ((newStatus === LeadStatus.REGISTERED || newStatus === LeadStatus.ACTIVATED || newStatus === LeadStatus.REGULAR) && wonReasonToSave) {
+          reasonSuffix = ` (สาเหตุปิดการขาย: ${wonReasonToSave}${wonReasonOtherToSave ? ` - ${wonReasonOtherToSave}` : ""})`;
+        } else if ((newStatus === LeadStatus.NOT_INTERESTED || newStatus === LeadStatus.LOST) && lostReasonToSave) {
+          reasonSuffix = ` (สาเหตุที่ปฏิเสธ: ${lostReasonToSave}${lostReasonOtherToSave ? ` - ${lostReasonOtherToSave}` : ""})`;
+        }
+
         timeline.push({
           id: `id_${Math.random().toString(36).substring(2, 11)}`,
           title: "เปลี่ยนสถานะ Pipeline",
-          description: `เปลี่ยนจาก "${lead.status}" เป็น "${newStatus}"`,
+          description: `เปลี่ยนจาก "${StatusLabels[lead.status] || lead.status}" เป็น "${StatusLabels[newStatus] || newStatus}"${reasonSuffix}`,
           date: new Date().toISOString(),
           type: "system"
         });
@@ -391,11 +498,15 @@ export default function App() {
           registeredDate = new Date().toISOString().split("T")[0];
           timeline.push({
             id: `id_${Math.random().toString(36).substring(2, 11)}`,
-            title: "ยื่นเอกสารอนุมัติสำเร็จ",
-            description: "ระบบจดบันทึกวันสมัครอย่างเป็นทางการเรียบร้อย",
+            title: "ยื่นเอกสารอนุมัติสำเร็จ (ปิดการขาย)",
+            description: `ระบบจดบันทึกวันสมัครอย่างเป็นทางการเรียบร้อย${wonReasonToSave ? ` [สาเหตุ: ${wonReasonToSave}]` : ""}`,
             date: new Date().toISOString(),
             type: "document"
           });
+        }
+
+        if (newStatus === LeadStatus.NOT_INTERESTED || newStatus === LeadStatus.LOST) {
+          lostDate = new Date().toISOString().split("T")[0];
         }
 
         if (newStatus === LeadStatus.ACTIVATED && !lead.activationDate) {
@@ -430,12 +541,18 @@ export default function App() {
         timeline,
         updatedAt: new Date().toISOString()
       };
+      if (wonReasonToSave !== undefined) updatedLead.wonReason = wonReasonToSave;
+      if (wonReasonOtherToSave !== undefined) updatedLead.wonReasonOther = wonReasonOtherToSave;
+      if (lostReasonToSave !== undefined) updatedLead.lostReason = lostReasonToSave;
+      if (lostReasonOtherToSave !== undefined) updatedLead.lostReasonOther = lostReasonOtherToSave;
       if (registeredDate !== null) updatedLead.registeredDate = registeredDate;
       if (activationDate !== null) updatedLead.activationDate = activationDate;
       if (customerCode !== null) updatedLead.customerCode = customerCode;
       if (firstShipmentDate !== null) updatedLead.firstShipmentDate = firstShipmentDate;
+      if (lostDate !== null) updatedLead.lostDate = lostDate;
 
-      await setDoc(doc(db, "leads", id), updatedLead);
+      const cleaned = cleanFirestorePayload(updatedLead);
+      await setDoc(doc(db, "leads", id), cleaned);
     } catch (err: any) {
       console.error(err);
       setErrorMsg("ไม่สามารถอัปเดตสถานะในเซิร์ฟเวอร์คลาวด์ได้");
@@ -534,40 +651,179 @@ export default function App() {
     }
   };
 
-  // 4. ADD TIMELINE/NOTE
-  const handleAddNote = async (leadId: string, text: string, author: string) => {
+  // 4. ADD / EDIT / DELETE / PIN NOTES
+  const handleAddNote = async (
+    leadId: string, 
+    text: string, 
+    author: string, 
+    category: string = "ข้อมูลสำคัญของลูกค้า", 
+    priority: "normal" | "important" | "urgent" = "normal", 
+    isPinned: boolean = false
+  ) => {
     setErrorMsg(null);
     try {
       const lead = leads.find(l => l.id === leadId);
       if (!lead) return;
 
-      const newNote = {
+      const newNote: Note = {
         id: `id_${Math.random().toString(36).substring(2, 11)}`,
-        text,
+        text: text.trim(),
         createdAt: new Date().toISOString(),
-        author: author || "ระบบ"
+        author: author || currentUser || "ระบบ",
+        category: category || "ข้อมูลสำคัญของลูกค้า",
+        priority: priority || "normal",
+        isPinned: Boolean(isPinned)
       };
 
       const notes = [...(lead.notes || []), newNote];
-      const timeline = [
+      const timeline: TimelineItem[] = [
         ...(lead.timeline || []),
         {
           id: `id_${Math.random().toString(36).substring(2, 11)}`,
-          title: "เขียนบันทึกช่วยจำ (Note)",
-          description: `โดย ${author || "ระบบ"}: "${text.substring(0, 30)}${text.length > 30 ? "..." : ""}"`,
+          title: isPinned ? "📌 เขียนและปักหมุดโน้ตช่วยจำ" : "เขียนบันทึกช่วยจำ (Note)",
+          description: `โดย ${author || currentUser || "ระบบ"} [${category}]: "${text.substring(0, 30)}${text.length > 30 ? "..." : ""}"`,
           date: new Date().toISOString(),
-          type: "note" as const
+          type: "note"
         }
       ];
 
-      await updateDoc(doc(db, "leads", leadId), {
+      const cleaned = cleanFirestorePayload({
         notes,
         timeline,
         updatedAt: new Date().toISOString()
       });
+
+      await updateDoc(doc(db, "leads", leadId), cleaned);
     } catch (err: any) {
       console.error(err);
       setErrorMsg("ไม่สามารถเพิ่มโน้ตใหม่ในฐานข้อมูลคลาวด์ได้");
+    }
+  };
+
+  const handleUpdateNote = async (
+    leadId: string, 
+    noteId: string, 
+    updatedFields: Partial<Note>, 
+    editorName?: string
+  ) => {
+    setErrorMsg(null);
+    try {
+      const lead = leads.find(l => l.id === leadId);
+      if (!lead || !lead.notes) return;
+
+      const existingNote = lead.notes.find(n => n.id === noteId);
+      if (!existingNote) return;
+
+      const notes = lead.notes.map(n => {
+        if (n.id === noteId) {
+          return {
+            ...n,
+            ...updatedFields,
+            updatedAt: new Date().toISOString(),
+            updatedBy: editorName || currentUser || "ระบบ"
+          };
+        }
+        return n;
+      });
+
+      const timeline: TimelineItem[] = [
+        ...(lead.timeline || []),
+        {
+          id: `id_${Math.random().toString(36).substring(2, 11)}`,
+          title: "แก้ไขบันทึกช่วยจำ (Note)",
+          description: `แก้ไขโดย ${editorName || currentUser || "ระบบ"}: "${(updatedFields.text || existingNote.text).substring(0, 30)}..."`,
+          date: new Date().toISOString(),
+          type: "note"
+        }
+      ];
+
+      const cleaned = cleanFirestorePayload({
+        notes,
+        timeline,
+        updatedAt: new Date().toISOString()
+      });
+
+      await updateDoc(doc(db, "leads", leadId), cleaned);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg("ไม่สามารถแก้ไขโน้ตในฐานข้อมูลคลาวด์ได้");
+    }
+  };
+
+  const handleDeleteNote = async (leadId: string, noteId: string, deleterName?: string) => {
+    setErrorMsg(null);
+    try {
+      const lead = leads.find(l => l.id === leadId);
+      if (!lead || !lead.notes) return;
+
+      const noteToDelete = lead.notes.find(n => n.id === noteId);
+      const notes = lead.notes.filter(n => n.id !== noteId);
+
+      const timeline: TimelineItem[] = [
+        ...(lead.timeline || []),
+        {
+          id: `id_${Math.random().toString(36).substring(2, 11)}`,
+          title: "ลบบันทึกช่วยจำ (Note)",
+          description: `ลบโดย ${deleterName || currentUser || "ระบบ"}${noteToDelete ? `: "${noteToDelete.text.substring(0, 25)}..."` : ""}`,
+          date: new Date().toISOString(),
+          type: "note"
+        }
+      ];
+
+      const cleaned = cleanFirestorePayload({
+        notes,
+        timeline,
+        updatedAt: new Date().toISOString()
+      });
+
+      await updateDoc(doc(db, "leads", leadId), cleaned);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg("ไม่สามารถลบโน้ตออกจากฐานข้อมูลคลาวด์ได้");
+    }
+  };
+
+  const handleTogglePinNote = async (leadId: string, noteId: string) => {
+    setErrorMsg(null);
+    try {
+      const lead = leads.find(l => l.id === leadId);
+      if (!lead || !lead.notes) return;
+
+      let pinnedStatus = false;
+      const notes = lead.notes.map(n => {
+        if (n.id === noteId) {
+          pinnedStatus = !n.isPinned;
+          return {
+            ...n,
+            isPinned: pinnedStatus,
+            updatedAt: new Date().toISOString(),
+            updatedBy: currentUser || "ระบบ"
+          };
+        }
+        return n;
+      });
+
+      const timeline: TimelineItem[] = [
+        ...(lead.timeline || []),
+        {
+          id: `id_${Math.random().toString(36).substring(2, 11)}`,
+          title: pinnedStatus ? "📌 ปักหมุดโน้ตช่วยจำ" : "ยกเลิกการปักหมุดโน้ต",
+          description: `ดำเนินการโดย ${currentUser || "ระบบ"}`,
+          date: new Date().toISOString(),
+          type: "note"
+        }
+      ];
+
+      const cleaned = cleanFirestorePayload({
+        notes,
+        timeline,
+        updatedAt: new Date().toISOString()
+      });
+
+      await updateDoc(doc(db, "leads", leadId), cleaned);
+    } catch (err: any) {
+      console.error(err);
+      setErrorMsg("ไม่สามารถอัปเดตสถานะปักหมุดในฐานข้อมูลคลาวด์ได้");
     }
   };
 
@@ -740,12 +996,11 @@ export default function App() {
 
   // Sidebar link options
   const SIDEBAR_LINKS = [
-    { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+    { id: "dashboard", label: "ภาพรวม & รายงานยอดขาย", icon: LayoutDashboard },
     { id: "leads", label: "Pipeline", icon: Users },
     { id: "followup", label: "Follow-up", icon: PhoneCall },
     { id: "documents", label: "คลังเอกสาร COD", icon: FileText },
     { id: "customers", label: "ฐานลูกค้าสมาชิก", icon: UserCheck },
-    { id: "reports", label: "รายงานผลงานขาย", icon: BarChart3 },
     { id: "notes", label: "โน้ตช่วยจำแชร์", icon: MessageSquare },
     { id: "settings", label: "ตั้งค่าระบบ & Sheets", icon: Settings },
   ];
@@ -775,7 +1030,20 @@ export default function App() {
   const renderActiveView = () => {
     switch (activeTab) {
       case "dashboard":
-        return <DashboardView leads={displayedLeads} onNavigate={handleNavigate} onSelectLead={setSelectedLead} onUpdateLead={handleUpdateLead} />;
+      case "reports":
+        return (
+          <DashboardView 
+            leads={displayedLeads} 
+            salespersons={salespersons}
+            campaigns={campaigns}
+            currentUser={currentUser}
+            kpiTargets={kpiTargets}
+            onSaveKpiTargets={handleSaveKpiTargets}
+            onNavigate={handleNavigate} 
+            onSelectLead={setSelectedLead} 
+            onUpdateLead={handleUpdateLead}
+          />
+        );
       case "leads":
         return (
           <LeadsView 
@@ -786,6 +1054,7 @@ export default function App() {
             onDeleteCampaign={handleDeleteCampaign}
             currentUser={currentUser}
             onAddLead={handleAddLead} 
+            onBatchAddLeads={handleBatchAddLeads}
             onUpdateLeadStatus={handleUpdateLeadStatus} 
             onSelectLead={setSelectedLead} 
             onUpdateLead={handleUpdateLead}
@@ -793,13 +1062,20 @@ export default function App() {
           />
         );
       case "followup":
-        return <FollowUpView leads={displayedLeads} onSelectLead={setSelectedLead} onUpdateLead={handleUpdateLead} />;
+        return (
+          <FollowUpView 
+            leads={displayedLeads} 
+            salespersons={salespersons}
+            currentUser={currentUser}
+            onSelectLead={setSelectedLead} 
+            onUpdateLead={handleUpdateLead} 
+            onAddNote={handleAddNote}
+          />
+        );
       case "documents":
         return <DocumentsView leads={displayedLeads} onSelectLead={setSelectedLead} onUpdateLead={handleUpdateLead} />;
       case "customers":
         return <CustomersView leads={displayedLeads} onSelectLead={setSelectedLead} onUpdateLead={handleUpdateLead} />;
-      case "reports":
-        return <ReportsView leads={displayedLeads} salespersons={salespersons} currentUser={currentUser} />;
       case "notes":
         return (
           <NotesView 
@@ -807,6 +1083,9 @@ export default function App() {
             salespersons={salespersons}
             currentUser={currentUser}
             onAddNote={handleAddNote} 
+            onUpdateNote={handleUpdateNote}
+            onDeleteNote={handleDeleteNote}
+            onTogglePinNote={handleTogglePinNote}
             onSelectLead={setSelectedLead} 
           />
         );
@@ -822,16 +1101,25 @@ export default function App() {
             currentUser={currentUser}
             userPasswords={userPasswords}
             onUpdatePassword={handleUpdatePassword}
-            sheetsConfig={sheetsConfig}
             onUpdateSalespersons={handleUpdateSalespersons}
             onRenameSelf={handleRenameSelf}
             onRenameSalesperson={handleRenameSalesperson}
-            onSyncGoogleSheets={handleSyncGoogleSheets} 
-            onUpdateSheetsConfig={handleUpdateSheetsConfig}
           />
         );
       default:
-        return <DashboardView leads={displayedLeads} onNavigate={handleNavigate} onSelectLead={setSelectedLead} />;
+        return (
+          <DashboardView 
+            leads={displayedLeads} 
+            salespersons={salespersons}
+            campaigns={campaigns}
+            currentUser={currentUser}
+            kpiTargets={kpiTargets}
+            onSaveKpiTargets={handleSaveKpiTargets}
+            onNavigate={handleNavigate} 
+            onSelectLead={setSelectedLead} 
+            onUpdateLead={handleUpdateLead}
+          />
+        );
     }
   };
 
@@ -1145,6 +1433,9 @@ export default function App() {
           onAddFile={handleAddFile}
         />
       )}
+
+      {/* 5. SYSTEM UPDATE NOTIFICATION POP-UP (Floating Bottom Alert) */}
+      <UpdateNotification appName="Mylogiz Sales CRM" />
 
     </div>
   );

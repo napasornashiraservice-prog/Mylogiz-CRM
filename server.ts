@@ -4,7 +4,12 @@ import fs from "fs";
 import { createServer as createViteServer } from "vite";
 import dotenv from "dotenv";
 import { GoogleGenAI, Type } from "@google/genai";
-import { LeadStatus, Lead, Note, TimelineItem, CRMStore } from "./src/types";
+import { 
+  LeadStatus, Lead, Note, TimelineItem, CRMStore, 
+  CPLEXIntegrationConfig, CPLEXApiLog, CPLEXSyncResult, CPLEXUsageSummary,
+  DEFAULT_CPLEX_DATA_MAPPINGS
+} from "./src/types";
+import { MylogizCPLEXAdapter } from "./src/integrations/cplex/cplexAdapter";
 
 dotenv.config();
 
@@ -21,6 +26,22 @@ const generateId = () => `id_${Math.random().toString(36).substring(2, 11)}`;
 // Initial/Seed Data
 const DEFAULT_LEADS: Lead[] = [];
 
+// Secure in-memory token store for CPLEX (prevent token leakage)
+let cplexSecretTokenInMemory = process.env.CPLEX_API_KEY || process.env.CPLEX_SECRET_TOKEN || "";
+
+const DEFAULT_CPLEX_CONFIG: CPLEXIntegrationConfig = {
+  systemName: "Mylogiz CPLEX",
+  baseUrl: "https://app.mylogiz.ai/th/mylogiz-cplex/admin/dashboard",
+  authType: "bearer_token",
+  customHeaderName: "X-API-Key",
+  customerIdentifier: "customerCode",
+  dataMapping: DEFAULT_CPLEX_DATA_MAPPINGS,
+  status: cplexSecretTokenInMemory ? "disconnected" : "waiting_for_api",
+  lastConnectedAt: null,
+  lastSyncedAt: null,
+  isEnabled: true
+};
+
 const INITIAL_STORE: CRMStore = {
   leads: DEFAULT_LEADS,
   sheetsConfig: {
@@ -29,7 +50,10 @@ const INITIAL_STORE: CRMStore = {
     isEnabled: true,
     lastSyncedAt: null
   },
-  salespersons: ["Phere", "Nalin", "Beer"]
+  salespersons: ["Phere", "Nalin", "Beer"],
+  cplexConfig: DEFAULT_CPLEX_CONFIG,
+  cplexLogs: [],
+  cplexSyncResult: null
 };
 
 // Database storage handling
@@ -55,6 +79,12 @@ const loadStore = (): CRMStore => {
         if (!store.sheetsConfig.sheetName) {
           store.sheetsConfig.sheetName = "Mylogiz_CRM_Sync";
         }
+      }
+      if (!store.cplexConfig) {
+        store.cplexConfig = { ...DEFAULT_CPLEX_CONFIG };
+      }
+      if (!store.cplexLogs) {
+        store.cplexLogs = [];
       }
       return store;
     }
@@ -579,6 +609,343 @@ app.post("/api/ai/analyze-lead", async (req, res) => {
     console.error("AI Analysis error:", error);
     res.status(500).json({ error: error.message || "เกิดข้อผิดพลาดในการวิเคราะห์ด้วย AI" });
   }
+});
+
+// ==========================================
+// 12. Mylogiz CPLEX Integration Endpoints
+// ==========================================
+
+// Helper to sanitize config for frontend (never send raw secret)
+const getSanitizedCplexConfig = (config: CPLEXIntegrationConfig): CPLEXIntegrationConfig => {
+  const hasToken = Boolean(cplexSecretTokenInMemory);
+  let status = config.status;
+  if (!hasToken && status !== "connected" && status !== "syncing") {
+    status = "waiting_for_api";
+  }
+  return {
+    ...config,
+    status,
+    hasToken,
+    tokenMasked: hasToken ? "••••••••••••••••" : ""
+  };
+};
+
+// 12.1 Get CPLEX Configuration & Status
+app.get("/api/integrations/cplex/config", (req, res) => {
+  const store = loadStore();
+  const config = store.cplexConfig || DEFAULT_CPLEX_CONFIG;
+  res.json(getSanitizedCplexConfig(config));
+});
+
+// 12.2 Save CPLEX Configuration
+app.post("/api/integrations/cplex/config", (req, res) => {
+  const store = loadStore();
+  const { 
+    systemName, 
+    baseUrl, 
+    authType, 
+    customHeaderName, 
+    customerIdentifier, 
+    dataMapping,
+    isEnabled,
+    rawSecretToken 
+  } = req.body;
+
+  if (rawSecretToken !== undefined && rawSecretToken !== null && rawSecretToken !== "") {
+    cplexSecretTokenInMemory = rawSecretToken;
+  }
+
+  const updatedConfig: CPLEXIntegrationConfig = {
+    ...(store.cplexConfig || DEFAULT_CPLEX_CONFIG),
+    systemName: systemName || store.cplexConfig?.systemName || "Mylogiz CPLEX",
+    baseUrl: baseUrl !== undefined ? baseUrl : (store.cplexConfig?.baseUrl || ""),
+    authType: authType || store.cplexConfig?.authType || "bearer_token",
+    customHeaderName: customHeaderName !== undefined ? customHeaderName : store.cplexConfig?.customHeaderName,
+    customerIdentifier: customerIdentifier || store.cplexConfig?.customerIdentifier || "customerCode",
+    dataMapping: dataMapping !== undefined ? dataMapping : (store.cplexConfig?.dataMapping || DEFAULT_CPLEX_DATA_MAPPINGS),
+    status: cplexSecretTokenInMemory ? "disconnected" : "waiting_for_api",
+    isEnabled: isEnabled !== undefined ? isEnabled : (store.cplexConfig?.isEnabled ?? true)
+  };
+
+  store.cplexConfig = updatedConfig;
+  saveStore(store);
+
+  res.json({
+    success: true,
+    message: "บันทึกการตั้งค่าเชื่อมต่อ Mylogiz CPLEX สำเร็จ",
+    config: getSanitizedCplexConfig(updatedConfig)
+  });
+});
+
+// 12.3 Test Connection with CPLEX
+app.post("/api/integrations/cplex/test", async (req, res) => {
+  const store = loadStore();
+  const config = store.cplexConfig || DEFAULT_CPLEX_CONFIG;
+
+  if (!cplexSecretTokenInMemory) {
+    return res.json({
+      success: false,
+      message: "รอการตั้งค่า API: ยังไม่มีการระบุ CPLEX API Key หรือ Secret Token ในระบบ (สามารถระบุใน Environment Variables หรือหน้า Settings เมื่อมีข้อมูลจริง)",
+      responseTimeMs: 0,
+      status: "waiting_for_api"
+    });
+  }
+
+  const adapter = new MylogizCPLEXAdapter(config, cplexSecretTokenInMemory);
+  const testResult = await adapter.testConnection();
+
+  // Save log
+  const logs = store.cplexLogs || [];
+  logs.unshift(testResult.log);
+  store.cplexLogs = logs.slice(0, 100);
+
+  if (testResult.success) {
+    config.status = "connected";
+    config.lastConnectedAt = new Date().toISOString();
+    config.lastErrorMessage = null;
+  } else {
+    config.status = "error";
+    config.lastErrorMessage = testResult.message;
+  }
+
+  store.cplexConfig = config;
+  saveStore(store);
+
+  res.json({
+    success: testResult.success,
+    message: testResult.message,
+    responseTimeMs: testResult.responseTimeMs,
+    status: config.status
+  });
+});
+
+// 12.4 Sync Data with CPLEX
+app.post("/api/integrations/cplex/sync", async (req, res) => {
+  const store = loadStore();
+  const config = store.cplexConfig || DEFAULT_CPLEX_CONFIG;
+
+  if (!config.isEnabled || !config.baseUrl) {
+    return res.status(400).json({
+      error: "ยังไม่ได้เปิดใช้งานหรือตั้งค่าระบบเชื่อมต่อ Mylogiz CPLEX"
+    });
+  }
+
+  config.status = "syncing";
+  saveStore(store);
+
+  const adapter = new MylogizCPLEXAdapter(config, cplexSecretTokenInMemory);
+  const { syncResult, log } = await adapter.syncData(store.leads);
+
+  // Save log
+  const logs = store.cplexLogs || [];
+  logs.unshift(log);
+  store.cplexLogs = logs.slice(0, 100);
+
+  if (syncResult.status === "success") {
+    config.status = "connected";
+    config.lastSyncedAt = syncResult.lastSync;
+    config.lastErrorMessage = null;
+  } else {
+    config.status = "error";
+    config.lastErrorMessage = syncResult.message;
+  }
+
+  store.cplexConfig = config;
+  store.cplexSyncResult = syncResult;
+  saveStore(store);
+
+  res.json({
+    success: syncResult.status === "success",
+    syncResult,
+    message: syncResult.message || "ซิงค์ข้อมูลเรียบร้อยแล้ว"
+  });
+});
+
+// 12.5 Get Customer Usage Summary from CPLEX
+app.get("/api/customers/:customerId/cplex", async (req, res) => {
+  try {
+    const { customerId } = req.params;
+    const { 
+      customerCode, 
+      phone, 
+      email, 
+      externalCustomerId, 
+      rangeType, 
+      startDate, 
+      endDate 
+    } = req.query as Record<string, string>;
+
+    const store = loadStore();
+    const config = store.cplexConfig || DEFAULT_CPLEX_CONFIG;
+
+    if (!config.isEnabled || !config.baseUrl || !cplexSecretTokenInMemory) {
+      return res.json({
+        success: false,
+        isConfigured: false,
+        status: "waiting_for_api",
+        errorMessage: "รอการตั้งค่า API: ยังไม่มีการระบุ CPLEX API Key หรือ Secret Token จริงในระบบ (ระบบเตรียมพร้อมแสดงผลเมื่อระบุ Credential)"
+      });
+    }
+
+    // Determine customer identifier value based on configuration preference
+    let identifierVal = "";
+    if (config.customerIdentifier === "externalCustomerId" && externalCustomerId) {
+      identifierVal = externalCustomerId;
+    } else if (config.customerIdentifier === "customerCode" && customerCode) {
+      identifierVal = customerCode;
+    } else if (config.customerIdentifier === "phone" && phone) {
+      identifierVal = phone;
+    } else if (config.customerIdentifier === "email" && email) {
+      identifierVal = email;
+    } else {
+      identifierVal = externalCustomerId || customerCode || phone || customerId;
+    }
+
+    if (!identifierVal) {
+      return res.json({
+        success: false,
+        isConfigured: true,
+        errorMessage: "ไม่พบรหัสอ้างอิงของลูกค้าสำหรับการค้นหาบนระบบ CPLEX"
+      });
+    }
+
+    const adapter = new MylogizCPLEXAdapter(config, cplexSecretTokenInMemory);
+    const result = await adapter.getCustomerUsage(
+      identifierVal,
+      config.customerIdentifier,
+      {
+        type: (rangeType as any) || "30days",
+        startDate,
+        endDate
+      }
+    );
+
+    // Save log
+    const logs = store.cplexLogs || [];
+    logs.unshift(result.log);
+    store.cplexLogs = logs.slice(0, 100);
+    saveStore(store);
+
+    if (result.success && result.usage) {
+      res.json({
+        success: true,
+        isConfigured: true,
+        usage: result.usage
+      });
+    } else {
+      res.json({
+        success: false,
+        isConfigured: true,
+        errorMessage: result.errorMessage || "ไม่พบข้อมูลการใช้งานของลูกค้ารายนี้บนระบบ CPLEX"
+      });
+    }
+
+  } catch (err: any) {
+    console.error("Error in CPLEX customer usage endpoint:", err);
+    res.status(500).json({
+      success: false,
+      isConfigured: true,
+      errorMessage: err.message || "เกิดข้อผิดพลาดในการดึงข้อมูลจาก CPLEX"
+    });
+  }
+});
+
+// 12.6 Get Detailed Customer Sales from CPLEX
+app.get("/api/customers/:customerId/cplex/sales", async (req, res) => {
+  const { customerId } = req.params;
+  const store = loadStore();
+  const config = store.cplexConfig || DEFAULT_CPLEX_CONFIG;
+
+  if (!config.isEnabled || !config.baseUrl) {
+    return res.status(400).json({ error: "ยังไม่ได้ตั้งค่า API Mylogiz CPLEX" });
+  }
+
+  const adapter = new MylogizCPLEXAdapter(config, cplexSecretTokenInMemory);
+  const { response, log } = await adapter.executeRequest({
+    endpoint: `/api/customers/${encodeURIComponent(customerId)}/sales`,
+    method: "GET"
+  });
+
+  const logs = store.cplexLogs || [];
+  logs.unshift(log);
+  store.cplexLogs = logs.slice(0, 100);
+  saveStore(store);
+
+  if (response.success) {
+    res.json(response.data || []);
+  } else {
+    res.status(response.statusCode || 500).json({ error: response.errorMessage });
+  }
+});
+
+// 12.7 Get Detailed Customer Shipments from CPLEX
+app.get("/api/customers/:customerId/cplex/shipments", async (req, res) => {
+  const { customerId } = req.params;
+  const store = loadStore();
+  const config = store.cplexConfig || DEFAULT_CPLEX_CONFIG;
+
+  if (!config.isEnabled || !config.baseUrl) {
+    return res.status(400).json({ error: "ยังไม่ได้ตั้งค่า API Mylogiz CPLEX" });
+  }
+
+  const adapter = new MylogizCPLEXAdapter(config, cplexSecretTokenInMemory);
+  const { response, log } = await adapter.executeRequest({
+    endpoint: `/api/customers/${encodeURIComponent(customerId)}/shipments`,
+    method: "GET"
+  });
+
+  const logs = store.cplexLogs || [];
+  logs.unshift(log);
+  store.cplexLogs = logs.slice(0, 100);
+  saveStore(store);
+
+  if (response.success) {
+    res.json(response.data || []);
+  } else {
+    res.status(response.statusCode || 500).json({ error: response.errorMessage });
+  }
+});
+
+// 12.8 Get Detailed Customer Orders from CPLEX
+app.get("/api/customers/:customerId/cplex/orders", async (req, res) => {
+  const { customerId } = req.params;
+  const store = loadStore();
+  const config = store.cplexConfig || DEFAULT_CPLEX_CONFIG;
+
+  if (!config.isEnabled || !config.baseUrl) {
+    return res.status(400).json({ error: "ยังไม่ได้ตั้งค่า API Mylogiz CPLEX" });
+  }
+
+  const adapter = new MylogizCPLEXAdapter(config, cplexSecretTokenInMemory);
+  const { response, log } = await adapter.executeRequest({
+    endpoint: `/api/customers/${encodeURIComponent(customerId)}/orders`,
+    method: "GET"
+  });
+
+  const logs = store.cplexLogs || [];
+  logs.unshift(log);
+  store.cplexLogs = logs.slice(0, 100);
+  saveStore(store);
+
+  if (response.success) {
+    res.json(response.data || []);
+  } else {
+    res.status(response.statusCode || 500).json({ error: response.errorMessage });
+  }
+});
+
+// 12.9 Get CPLEX API Interaction Logs
+app.get("/api/integrations/cplex/logs", (req, res) => {
+  const store = loadStore();
+  res.json(store.cplexLogs || []);
+});
+
+// 12.10 Clear CPLEX API Logs
+app.delete("/api/integrations/cplex/logs", (req, res) => {
+  const store = loadStore();
+  store.cplexLogs = [];
+  saveStore(store);
+  res.json({ success: true, message: "ล้างรายการ API Logs สำเร็จ" });
 });
 
 // Vite Middleware & static assets serving

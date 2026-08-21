@@ -1,15 +1,35 @@
 import React, { useState } from "react";
-import { Lead, LeadStatus, StatusLabels, StatusColors, Note, TimelineItem, Documents, THAI_PROVINCES, TRANSPORT_CARRIERS } from "../types";
+import { 
+  Lead, 
+  LeadStatus, 
+  StatusLabels, 
+  StatusColors, 
+  Note, 
+  TimelineItem, 
+  Documents, 
+  THAI_PROVINCES, 
+  TRANSPORT_CARRIERS, 
+  PRESET_TAG_CATEGORIES,
+  NOTE_CATEGORIES,
+  NoteCategory,
+  NotePriority,
+  FollowUpPriority
+} from "../types";
 import { 
   X, Calendar, Clock, Star, Phone, MapPin, Tag, Briefcase, 
   Plus, Trash2, FileText, UploadCloud, MessageSquare, ClipboardCheck, 
   Clock3, ShieldCheck, HelpCircle, Package, Send, Copy, Check,
   Image as ImageIcon, Eye, Download, Loader2, Paperclip,
   Sparkles, TrendingUp, CheckCircle2, AlertTriangle, Lightbulb, Zap, ShieldAlert,
-  Megaphone, Pencil, Share2
+  Megaphone, Pencil, Share2, PhoneCall, Lock, Server, Pin, PinOff, Flame
 } from "lucide-react";
 import { motion } from "motion/react";
 import CampaignManagerModal from "./CampaignManagerModal";
+import StatusReasonModal from "./StatusReasonModal";
+import CPLEXUsageCard from "./integrations/CPLEXUsageCard";
+import TagPill from "./TagPill";
+import TagPickerPopover from "./TagPickerPopover";
+import { getFollowUpStatus, getTagInfo, canManageTags } from "../utils/crmHelpers";
 
 interface LeadDetailsModalProps {
   lead: Lead;
@@ -20,7 +40,14 @@ interface LeadDetailsModalProps {
   currentUser?: string | null;
   onClose: () => void;
   onUpdateLead: (updatedLead: Lead) => void;
-  onAddNote: (leadId: string, text: string, author: string) => void;
+  onAddNote: (
+    leadId: string, 
+    text: string, 
+    author: string, 
+    category?: string, 
+    priority?: NotePriority, 
+    isPinned?: boolean
+  ) => void;
   onAddCall: (leadId: string, answered: boolean, interestLevel: number, notes: string, nextFollowUpInDays?: number, customFollowUpDate?: string) => void;
   onAddFile: (leadId: string, name: string, size: string, type: "image" | "pdf" | "other", url?: string) => void;
   onDeleteLead?: (leadId: string) => Promise<boolean> | void;
@@ -45,7 +72,7 @@ export default function LeadDetailsModal({
   onAddCall, 
   onAddFile 
 }: LeadDetailsModalProps) {
-  const [activeTab, setActiveTab] = useState<"timeline" | "calls" | "notes" | "files" | "ai">("timeline");
+  const [activeTab, setActiveTab] = useState<"timeline" | "calls" | "notes" | "files" | "ai" | "cplex">("timeline");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeletingLead, setIsDeletingLead] = useState(false);
   
@@ -115,9 +142,17 @@ export default function LeadDetailsModal({
   const [followUpDate, setFollowUpDate] = useState(lead.followUp?.date || "");
   const [followUpTime, setFollowUpTime] = useState(lead.followUp?.time || "10:00");
   const [followUpCompleted, setFollowUpCompleted] = useState(lead.followUp?.isCompleted || false);
+  const [followUpPriority, setFollowUpPriority] = useState<FollowUpPriority>(
+    (lead.followUp?.priority as FollowUpPriority) || "normal"
+  );
   const [followUpNote, setFollowUpNote] = useState(lead.followUp?.note || "");
+  const [followUpTopic, setFollowUpTopic] = useState("");
   const [isSavingFollowUp, setIsSavingFollowUp] = useState(false);
   const [saveFollowUpSuccess, setSaveFollowUpSuccess] = useState(false);
+
+  // Tags state
+  const [customTagInput, setCustomTagInput] = useState("");
+  const [selectedTagCategory, setSelectedTagCategory] = useState<string>(PRESET_TAG_CATEGORIES[0]?.name || "");
 
   // Sync state when lead prop updates
   React.useEffect(() => {
@@ -142,6 +177,7 @@ export default function LeadDetailsModal({
     setFollowUpDate(lead.followUp?.date || "");
     setFollowUpTime(lead.followUp?.time || "10:00");
     setFollowUpCompleted(lead.followUp?.isCompleted || false);
+    setFollowUpPriority((lead.followUp?.priority as FollowUpPriority) || "normal");
     setFollowUpNote(lead.followUp?.note || "");
   }, [
     lead.id, 
@@ -158,6 +194,9 @@ export default function LeadDetailsModal({
   // Notes state
   const [noteText, setNoteText] = useState("");
   const [noteAuthor, setNoteAuthor] = useState(() => currentUser || salespersons[0] || "Phere");
+  const [noteCategory, setNoteCategory] = useState<string>("ข้อมูลสำคัญของลูกค้า");
+  const [notePriority, setNotePriority] = useState<NotePriority>("normal");
+  const [notePinned, setNotePinned] = useState(false);
 
   React.useEffect(() => {
     if (currentUser) {
@@ -323,11 +362,129 @@ export default function LeadDetailsModal({
     });
   };
 
+  // Status Reason modal state
+  const [statusReasonModal, setStatusReasonModal] = useState<{
+    isOpen: boolean;
+    targetStatus: LeadStatus | null;
+  }>({
+    isOpen: false,
+    targetStatus: null
+  });
+
   const handleUpdateStatus = (status: LeadStatus) => {
     onUpdateLead({
       ...lead,
       status
     });
+  };
+
+  const handleRequestStatusUpdate = (status: LeadStatus) => {
+    if (status === lead.status) return;
+    const isWon = status === LeadStatus.REGISTERED || status === LeadStatus.ACTIVATED || status === LeadStatus.REGULAR;
+    const isRejected = status === LeadStatus.NOT_INTERESTED || status === LeadStatus.LOST;
+
+    if (isWon || isRejected) {
+      setStatusReasonModal({
+        isOpen: true,
+        targetStatus: status
+      });
+    } else {
+      handleUpdateStatus(status);
+    }
+  };
+
+  const handleConfirmStatusReason = ({
+    status,
+    reason,
+    reasonOther
+  }: {
+    status: LeadStatus;
+    reason: string;
+    reasonOther?: string;
+  }) => {
+    const isWon = status === LeadStatus.REGISTERED || status === LeadStatus.ACTIVATED || status === LeadStatus.REGULAR;
+    const isRejected = status === LeadStatus.NOT_INTERESTED || status === LeadStatus.LOST;
+
+    const updatedTimeline = [...(lead.timeline || [])];
+    const reasonSuffix = isWon 
+      ? ` (สาเหตุปิดการขาย: ${reason}${reasonOther ? ` - ${reasonOther}` : ""})`
+      : ` (สาเหตุที่ปฏิเสธ: ${reason}${reasonOther ? ` - ${reasonOther}` : ""})`;
+
+    updatedTimeline.unshift({
+      id: `id_${Math.random().toString(36).substring(2, 11)}`,
+      title: "เปลี่ยนสถานะ Pipeline",
+      description: `เปลี่ยนจาก "${StatusLabels[lead.status]}" เป็น "${StatusLabels[status]}"${reasonSuffix}`,
+      date: new Date().toISOString(),
+      type: "system"
+    });
+
+    onUpdateLead({
+      ...lead,
+      status,
+      ...(isWon ? { wonReason: reason, wonReasonOther: reasonOther } : {}),
+      ...(isRejected ? { lostReason: reason, lostReasonOther: reasonOther, lostDate: new Date().toISOString().split("T")[0] } : {}),
+      timeline: updatedTimeline
+    });
+
+    setStatusReasonModal({ isOpen: false, targetStatus: null });
+  };
+
+  const isTagAdmin = canManageTags(currentUser, salespersons);
+
+  const handleToggleTag = (tagName: string) => {
+    if (!isTagAdmin) return;
+    const currentTags = lead.tags || [];
+    const exists = currentTags.includes(tagName);
+    const updatedTags = exists 
+      ? currentTags.filter(t => t !== tagName)
+      : [...currentTags, tagName];
+
+    const updatedTimeline = [...(lead.timeline || [])];
+    updatedTimeline.unshift({
+      id: `id_${Math.random().toString(36).substring(2, 11)}`,
+      title: exists ? `ถอนแท็ก: ${tagName}` : `ติดแท็ก: ${tagName}`,
+      description: exists ? `นำป้ายกำกับออกจาก Lead` : `เพิ่มป้ายกำกับให้ Lead สำเร็จ`,
+      date: new Date().toISOString(),
+      type: exists ? "tag_remove" : "tag_add"
+    });
+
+    onUpdateLead({
+      ...lead,
+      tags: updatedTags,
+      timeline: updatedTimeline
+    });
+  };
+
+  const handleAddCustomTag = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!isTagAdmin) return;
+    const tag = customTagInput.trim();
+    if (!tag) return;
+    const currentTags = lead.tags || [];
+    if (!currentTags.includes(tag)) {
+      handleToggleTag(tag);
+    }
+    setCustomTagInput("");
+  };
+
+  const handleQuickSnooze = (minutes?: number, days?: number, customTime?: string) => {
+    const now = new Date();
+    if (minutes) {
+      now.setMinutes(now.getMinutes() + minutes);
+      const dateStr = now.toISOString().split("T")[0];
+      const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+      setFollowUpDate(dateStr);
+      setFollowUpTime(timeStr);
+      setFollowUpCompleted(false);
+    } else if (days !== undefined) {
+      now.setDate(now.getDate() + days);
+      const dateStr = now.toISOString().split("T")[0];
+      setFollowUpDate(dateStr);
+      if (customTime) {
+        setFollowUpTime(customTime);
+      }
+      setFollowUpCompleted(false);
+    }
   };
 
   const handleSaveFollowUpSettings = async () => {
@@ -338,10 +495,11 @@ export default function LeadDetailsModal({
     setIsSavingFollowUp(true);
     try {
       const updatedTimeline = [...(lead.timeline || [])];
+      const fullNote = [followUpTopic ? `[${followUpTopic}]` : "", followUpNote ? followUpNote.trim() : ""].filter(Boolean).join(" ");
       updatedTimeline.unshift({
         id: `id_${Math.random().toString(36).substring(2, 11)}`,
         title: "บันทึกแผนโทรติดตาม (Follow Up Plan)",
-        description: `นัดหมายโทรวันที่ ${followUpDate} เวลา ${followUpTime || "10:00"} น.${followUpNote ? ` (หมายเหตุ: ${followUpNote})` : ""} [${followUpCompleted ? "ทำเครื่องหมายเป็นโทรแล้ว" : "รอดำเนินการ"}]`,
+        description: `นัดหมายโทรวันที่ ${followUpDate} เวลา ${followUpTime || "10:00"} น.${fullNote ? ` (${fullNote})` : ""} [${followUpCompleted ? "ทำเครื่องหมายเป็นโทรแล้ว" : "รอดำเนินการ"}]`,
         date: new Date().toISOString(),
         type: "call"
       });
@@ -353,7 +511,8 @@ export default function LeadDetailsModal({
           date: followUpDate,
           time: followUpTime || "10:00",
           isCompleted: followUpCompleted,
-          note: followUpNote ? followUpNote.trim() : ""
+          priority: followUpPriority,
+          note: fullNote
         }
       });
       setSaveFollowUpSuccess(true);
@@ -370,8 +529,10 @@ export default function LeadDetailsModal({
   const submitNote = (e: React.FormEvent) => {
     e.preventDefault();
     if (!noteText.trim()) return;
-    onAddNote(lead.id, noteText, noteAuthor);
+    onAddNote(lead.id, noteText.trim(), noteAuthor, noteCategory, notePriority, notePinned);
     setNoteText("");
+    setNotePinned(false);
+    setNotePriority("normal");
   };
 
   const submitCall = (e: React.FormEvent) => {
@@ -463,6 +624,17 @@ export default function LeadDetailsModal({
               <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${StatusColors[lead.status]}`}>
                 {StatusLabels[lead.status]}
               </span>
+              {lead.phone && (
+                <a
+                  id="header-direct-call-btn"
+                  href={`tel:${lead.phone.replace(/[^0-9+]/g, "")}`}
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-bold transition-colors shadow-2xs cursor-pointer"
+                  title={`กดเพื่อโทรออกหา ${lead.contactName || lead.shopName} ทันที (${lead.phone})`}
+                >
+                  <PhoneCall className="w-3.5 h-3.5" />
+                  <span>โทรหาลูกค้า</span>
+                </a>
+              )}
               <button
                 id="header-quick-ai-analyze-btn"
                 onClick={() => {
@@ -476,6 +648,18 @@ export default function LeadDetailsModal({
               >
                 <Sparkles className="w-3.5 h-3.5 text-amber-300 animate-pulse" />
                 <span>✨ AI วิเคราะห์</span>
+              </button>
+
+              <button
+                id="header-quick-cplex-btn"
+                onClick={() => {
+                  setActiveTab("cplex");
+                }}
+                className="px-2.5 py-1 bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 hover:from-indigo-900 hover:to-slate-900 text-white border border-indigo-500/30 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 shadow-2xs cursor-pointer"
+                title="ดูข้อมูลการใช้งานจริงจาก Mylogiz CPLEX"
+              >
+                <Server className="w-3.5 h-3.5 text-indigo-300" />
+                <span>📦 ข้อมูล CPLEX</span>
               </button>
             </div>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500">
@@ -576,18 +760,66 @@ export default function LeadDetailsModal({
           <div className="lg:col-span-7 space-y-4">
             
             {/* Status quick switcher */}
-            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 flex items-center justify-between text-xs">
-              <span className="font-bold text-slate-700">ปรับสถานะ Pipeline:</span>
-              <select
-                id="details-status-switcher"
-                value={lead.status}
-                onChange={(e) => handleUpdateStatus(e.target.value as LeadStatus)}
-                className="bg-white border border-slate-200 rounded px-2.5 py-1 text-slate-600 font-semibold focus:outline-none cursor-pointer"
-              >
-                {ALL_STATUSES.map(st => (
-                  <option key={st} value={st}>{StatusLabels[st]}</option>
-                ))}
-              </select>
+            <div className="bg-slate-50 p-3 rounded-xl border border-slate-200 space-y-2 text-xs">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-700">ปรับสถานะ Pipeline:</span>
+                <select
+                  id="details-status-switcher"
+                  value={lead.status}
+                  onChange={(e) => handleRequestStatusUpdate(e.target.value as LeadStatus)}
+                  className="bg-white border border-slate-200 rounded px-2.5 py-1 text-slate-700 font-semibold focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                >
+                  {ALL_STATUSES.map(st => (
+                    <option key={st} value={st}>{StatusLabels[st]}</option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Won Reason Details Display */}
+              {lead.wonReason && (lead.status === LeadStatus.REGISTERED || lead.status === LeadStatus.ACTIVATED || lead.status === LeadStatus.REGULAR) && (
+                <div className="p-2.5 bg-emerald-50 border border-emerald-200 rounded-lg flex items-start justify-between gap-2 text-emerald-900">
+                  <div className="flex items-start gap-2">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold block text-emerald-950">สาเหตุที่ปิดการขาย:</span>
+                      <span className="text-xs text-emerald-800 font-medium">{lead.wonReason}</span>
+                      {lead.wonReasonOther && (
+                        <p className="text-[11px] text-emerald-700 mt-0.5 italic">รายละเอียด: "{lead.wonReasonOther}"</p>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setStatusReasonModal({ isOpen: true, targetStatus: lead.status })}
+                    className="text-[10px] font-bold text-emerald-700 hover:text-emerald-900 underline shrink-0 cursor-pointer"
+                  >
+                    แก้ไขสาเหตุ
+                  </button>
+                </div>
+              )}
+
+              {/* Rejection Reason Details Display */}
+              {lead.lostReason && (lead.status === LeadStatus.NOT_INTERESTED || lead.status === LeadStatus.LOST) && (
+                <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-lg flex items-start justify-between gap-2 text-rose-900">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+                    <div>
+                      <span className="font-bold block text-rose-950">สาเหตุที่ปฏิเสธ:</span>
+                      <span className="text-xs text-rose-800 font-medium">{lead.lostReason}</span>
+                      {lead.lostReasonOther && (
+                        <p className="text-[11px] text-rose-700 mt-0.5 italic">รายละเอียด: "{lead.lostReasonOther}"</p>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setStatusReasonModal({ isOpen: true, targetStatus: lead.status })}
+                    className="text-[10px] font-bold text-rose-700 hover:text-rose-900 underline shrink-0 cursor-pointer"
+                  >
+                    แก้ไขสาเหตุ
+                  </button>
+                </div>
+              )}
             </div>
 
             {/* Profile detail card */}
@@ -1048,6 +1280,53 @@ export default function LeadDetailsModal({
               )}
             </div>
 
+            {/* Tags & Labels Management Card */}
+            <div id="lead-tags-management-card" className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <Tag className="w-4 h-4 text-blue-600" /> ป้ายกำกับลูกค้า (Customer Tags)
+                  </h3>
+                  <span className="text-[11px] text-slate-400 font-medium">
+                    ({(lead.tags || []).length} ป้าย)
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <TagPickerPopover
+                    leadTags={lead.tags || []}
+                    onToggleTag={handleToggleTag}
+                    buttonLabel="+ จัดการ Tags"
+                  />
+                </div>
+              </div>
+
+              {/* Current Active Tags Display */}
+              <div className="min-h-[42px] p-2.5 bg-slate-50/80 border border-slate-200/80 rounded-xl flex flex-wrap items-center gap-1.5">
+                {(lead.tags && lead.tags.length > 0) ? (
+                  lead.tags.map(tag => (
+                    <TagPill
+                      key={tag}
+                      tag={tag}
+                      size="sm"
+                      onRemove={() => handleToggleTag(tag)}
+                    />
+                  ))
+                ) : (
+                  <div className="flex items-center justify-between w-full py-1">
+                    <span className="text-xs text-slate-400 italic">
+                      ยังไม่มีการติดป้ายกำกับให้ลูกค้ารายนี้
+                    </span>
+                    <TagPickerPopover
+                      leadTags={lead.tags || []}
+                      onToggleTag={handleToggleTag}
+                      buttonLabel="+ เพิ่มป้ายกำกับแรก"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
             {/* Document Checklist checklist layout */}
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
               <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider mb-3 flex items-center gap-1.5">
@@ -1087,9 +1366,20 @@ export default function LeadDetailsModal({
             {/* Quick Follow-up Scheduler Panel */}
             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
               <div className="flex items-center justify-between">
-                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <Clock3 className="w-4 h-4 text-amber-500" /> บันทึกวันและเวลาติดตามงาน (Follow Up Plan)
-                </h3>
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
+                    <Clock3 className="w-4 h-4 text-amber-500" /> บันทึกวันและเวลาติดตามงาน (Follow Up Plan)
+                  </h3>
+                  {(() => {
+                    const fuStatus = getFollowUpStatus(lead.followUp);
+                    return (
+                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${fuStatus.badgeClass}`}>
+                        {fuStatus.label}
+                      </span>
+                    );
+                  })()}
+                </div>
+
                 {saveFollowUpSuccess && (
                   <motion.span 
                     initial={{ opacity: 0, y: -4 }}
@@ -1101,21 +1391,37 @@ export default function LeadDetailsModal({
                 )}
               </div>
 
-              {/* Quick Date Presets */}
+              {/* Quick Snooze & Presets */}
               <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                <span className="text-slate-400 text-[10px] font-medium mr-1">ตั้งวันด่วน:</span>
+                <span className="text-slate-400 text-[10px] font-medium mr-1">เลื่อน/ตั้งวันด่วน:</span>
+                <button
+                  type="button"
+                  id="preset-snooze-15m"
+                  onClick={() => handleQuickSnooze(15)}
+                  className="px-2 py-1 bg-slate-100 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 border border-slate-200 rounded text-slate-600 font-medium transition-colors cursor-pointer"
+                >
+                  +15 นาที
+                </button>
+                <button
+                  type="button"
+                  id="preset-snooze-30m"
+                  onClick={() => handleQuickSnooze(30)}
+                  className="px-2 py-1 bg-slate-100 hover:bg-amber-50 hover:text-amber-700 hover:border-amber-200 border border-slate-200 rounded text-slate-600 font-medium transition-colors cursor-pointer"
+                >
+                  +30 นาที
+                </button>
                 <button
                   type="button"
                   id="preset-follow-tomorrow"
-                  onClick={() => handleSetQuickDate(1)}
+                  onClick={() => handleQuickSnooze(undefined, 1, "09:30")}
                   className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 border border-slate-200 rounded text-slate-600 font-medium transition-colors cursor-pointer"
                 >
-                  +1 วัน (พรุ่งนี้)
+                  พรุ่งนี้ 09:30
                 </button>
                 <button
                   type="button"
                   id="preset-follow-3days"
-                  onClick={() => handleSetQuickDate(3)}
+                  onClick={() => handleQuickSnooze(undefined, 3, "10:00")}
                   className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 border border-slate-200 rounded text-slate-600 font-medium transition-colors cursor-pointer"
                 >
                   +3 วัน
@@ -1123,22 +1429,31 @@ export default function LeadDetailsModal({
                 <button
                   type="button"
                   id="preset-follow-7days"
-                  onClick={() => handleSetQuickDate(7)}
+                  onClick={() => handleQuickSnooze(undefined, 7, "10:00")}
                   className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 border border-slate-200 rounded text-slate-600 font-medium transition-colors cursor-pointer"
                 >
                   +7 วัน (1 สัปดาห์)
                 </button>
-                <button
-                  type="button"
-                  id="preset-follow-14days"
-                  onClick={() => handleSetQuickDate(14)}
-                  className="px-2 py-1 bg-slate-100 hover:bg-indigo-50 hover:text-indigo-600 hover:border-indigo-200 border border-slate-200 rounded text-slate-600 font-medium transition-colors cursor-pointer"
-                >
-                  +14 วัน
-                </button>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end text-xs">
+              {/* Topic Selector */}
+              <div>
+                <label className="text-gray-500 font-semibold block text-[10px] mb-1">หัวข้อ/เรื่องที่ต้องติดตาม</label>
+                <div className="flex flex-wrap gap-1 mb-1.5">
+                  {["โทรสรุปเรทราคา", "ติดตามเอกสารยื่นสมัคร", "นัดสอนระบบ MyLogiz", "เสนอโปรโมชั่นพิเศษ", "สอบถามความพึงพอใจ", "โทรเช็คยอดเปิดพอร์ต"].map(topic => (
+                    <button
+                      key={topic}
+                      type="button"
+                      onClick={() => setFollowUpTopic(topic)}
+                      className={`px-2 py-0.5 rounded text-[10px] font-semibold border transition-all cursor-pointer ${followUpTopic === topic ? "bg-amber-600 text-white border-amber-600" : "bg-slate-100 border-slate-200 text-slate-600 hover:bg-slate-200"}`}
+                    >
+                      {topic}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-3 items-end text-xs">
                 <div>
                   <label className="text-gray-500 font-semibold block text-[10px] mb-1">วันที่ต้องการโทรติดตาม</label>
                   <div className="relative">
@@ -1162,6 +1477,19 @@ export default function LeadDetailsModal({
                   />
                 </div>
                 <div>
+                  <label className="text-gray-500 font-semibold block text-[10px] mb-1">ระดับความสำคัญ</label>
+                  <select
+                    id="details-follow-priority"
+                    value={followUpPriority}
+                    onChange={(e) => setFollowUpPriority(e.target.value as FollowUpPriority)}
+                    className="w-full bg-slate-50 border border-slate-200 p-2 rounded focus:outline-none focus:ring-1 focus:ring-indigo-500 font-semibold text-slate-800"
+                  >
+                    <option value="urgent">🔥 เร่งด่วน</option>
+                    <option value="important">🟠 สำคัญ</option>
+                    <option value="normal">⚪ ปกติ</option>
+                  </select>
+                </div>
+                <div>
                   <label className="text-gray-500 font-semibold block text-[10px] mb-1">สถานะการโทร</label>
                   <button
                     id="toggle-follow-completed-btn"
@@ -1173,12 +1501,12 @@ export default function LeadDetailsModal({
                     {followUpCompleted ? (
                       <>
                         <Check className="w-3.5 h-3.5" />
-                        <span>โทรติดตามแล้ว</span>
+                        <span>โทรแล้ว</span>
                       </>
                     ) : (
                       <>
                         <Clock className="w-3.5 h-3.5" />
-                        <span>รอดำเนินการโทร</span>
+                        <span>รอดำเนินการ</span>
                       </>
                     )}
                   </button>
@@ -1186,11 +1514,11 @@ export default function LeadDetailsModal({
               </div>
 
               <div>
-                <label className="text-gray-500 font-semibold block text-[10px] mb-1">โน้ต/หัวข้อที่ต้องคุยในการโทรครั้งนี้ (ถ้ามี)</label>
+                <label className="text-gray-500 font-semibold block text-[10px] mb-1">รายละเอียดเพิ่มเติม</label>
                 <input 
                   id="details-follow-note"
                   type="text"
-                  placeholder="เช่น โทรสรุปเรทราคา, สอบถามเรื่องเอกสาร, ติดตามผลย้ายค่าย..."
+                  placeholder="เช่น ลูกค้าขอคิดดูเรื่องเรทขนส่ง Flash, เอกสารยังขาดรูปถ่ายหน้าร้าน..."
                   value={followUpNote}
                   onChange={(e) => setFollowUpNote(e.target.value)}
                   className="w-full bg-slate-50 border border-slate-200 p-2 rounded text-xs focus:outline-none focus:ring-1 focus:ring-indigo-500 text-slate-800"
@@ -1220,9 +1548,12 @@ export default function LeadDetailsModal({
               </div>
             </div>
 
+            {/* CPLEX Usage Summary Card (Embedded in Left Column) */}
+            <CPLEXUsageCard lead={lead} onUpdateLead={onUpdateLead} />
+
           </div>
 
-          {/* Right Column (5/12) - Tabbed interaction logs (Timeline, Calls, Notes, Files) */}
+          {/* Right Column (5/12) - Tabbed interaction logs (Timeline, Calls, Notes, Files, AI, CPLEX) */}
           <div className="lg:col-span-5 flex flex-col bg-slate-50 rounded-2xl border border-slate-200 overflow-hidden min-h-[380px]">
             
             {/* Tabs Selector Navigation */}
@@ -1230,9 +1561,10 @@ export default function LeadDetailsModal({
               {[
                 { id: "timeline", label: "ประวัติการขาย", icon: Clock3 },
                 { id: "calls", label: "บันทึกการโทร", icon: Phone },
-                { id: "notes", label: "โน้ตย่อย", icon: MessageSquare },
+                { id: "notes", label: `Shared Notes (${(lead.notes || []).length})`, icon: MessageSquare },
                 { id: "files", label: "เอกสารแนบ", icon: FileText },
-                { id: "ai", label: "✨ AI วิเคราะห์", icon: Sparkles }
+                { id: "ai", label: "✨ AI วิเคราะห์", icon: Sparkles },
+                { id: "cplex", label: "📦 CPLEX", icon: Server }
               ].map(tab => (
                 <button
                   key={tab.id}
@@ -1245,7 +1577,7 @@ export default function LeadDetailsModal({
                   }}
                   className={`flex-1 flex items-center justify-center gap-1 py-2 px-1.5 rounded-lg text-[11px] font-bold transition-all cursor-pointer whitespace-nowrap ${activeTab === tab.id ? "bg-white text-blue-600 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
                 >
-                  <tab.icon className={`w-3.5 h-3.5 ${tab.id === "ai" ? "text-amber-500 animate-pulse" : ""}`} />
+                  <tab.icon className={`w-3.5 h-3.5 ${tab.id === "ai" ? "text-amber-500 animate-pulse" : tab.id === "cplex" ? "text-indigo-600" : tab.id === "notes" ? "text-blue-600" : ""}`} />
                   <span className="hidden sm:inline">{tab.label}</span>
                 </button>
               ))}
@@ -1418,35 +1750,84 @@ export default function LeadDetailsModal({
               {/* TAB 3: Continuous note logging */}
               {activeTab === "notes" && (
                 <div id="tab-content-notes" className="space-y-4">
-                  <div className="bg-white p-3 rounded-xl border border-gray-200">
-                    <form onSubmit={submitNote} className="space-y-2">
+                  <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-2.5">
+                    <form onSubmit={submitNote} className="space-y-2.5">
                       <div className="flex items-center justify-between gap-2">
-                        <span className="font-bold text-gray-800">📝 เขียนบันทึกช่วยจำ</span>
+                        <span className="font-bold text-slate-800 text-xs flex items-center gap-1.5">
+                          <MessageSquare className="w-3.5 h-3.5 text-blue-600" />
+                          <span>เขียนบันทึกช่วยจำ (Shared Note)</span>
+                        </span>
                         <select 
                           id="note-author-select"
                           value={noteAuthor} 
                           onChange={(e) => setNoteAuthor(e.target.value)}
-                          className="bg-gray-50 border rounded px-1.5 py-0.5 text-[10px] text-gray-600 font-medium"
+                          className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[10px] text-slate-700 font-medium cursor-pointer"
                         >
                           {(salespersons.length > 0 ? salespersons : ["Phere", "Nalin", "Beer"]).map((sp) => (
                             <option key={sp} value={sp}>{sp}</option>
                           ))}
                         </select>
                       </div>
+
+                      {/* Category & Priority in Modal */}
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] text-slate-500 font-bold block mb-0.5">ประเภทโน้ต</label>
+                          <select
+                            id="modal-note-category-select"
+                            value={noteCategory}
+                            onChange={(e) => setNoteCategory(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-[11px] text-slate-800 cursor-pointer"
+                          >
+                            {NOTE_CATEGORIES.map((cat) => (
+                              <option key={cat} value={cat}>{cat}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div>
+                          <label className="text-[10px] text-slate-500 font-bold block mb-0.5">ความสำคัญ</label>
+                          <select
+                            id="modal-note-priority-select"
+                            value={notePriority}
+                            onChange={(e) => setNotePriority(e.target.value as NotePriority)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-lg p-1.5 text-[11px] text-slate-800 cursor-pointer font-medium"
+                          >
+                            <option value="normal">⚪ ปกติ</option>
+                            <option value="important">⭐ สำคัญ</option>
+                            <option value="urgent">🔥 สำคัญมาก</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Pin checkbox */}
+                      <div className="flex items-center justify-between pt-0.5">
+                        <label className="flex items-center gap-1.5 text-[11px] text-slate-600 cursor-pointer select-none font-medium">
+                          <input
+                            id="modal-note-pin-checkbox"
+                            type="checkbox"
+                            checked={notePinned}
+                            onChange={(e) => setNotePinned(e.target.checked)}
+                            className="rounded text-amber-600 focus:ring-amber-500 w-3.5 h-3.5 cursor-pointer"
+                          />
+                          <Pin className={`w-3 h-3 ${notePinned ? "text-amber-600 fill-amber-500" : "text-slate-400"}`} />
+                          <span>ปักหมุด Note นี้ไว้ด้านบนสุด</span>
+                        </label>
+                      </div>
                       
                       <div className="relative">
                         <textarea
                           id="new-note-text"
                           rows={3}
-                          placeholder="พิมพ์ข้อความบันทึกช่วยจำสำหรับแชร์ในทีม... เช่น 'ลูกค้าชอบคุยทางโทรศัพท์มากกว่า Line'"
+                          placeholder="พิมพ์ข้อความบันทึกช่วยจำสำหรับแชร์ในทีม... เช่น 'ชอบให้โทรคุยช่วงเช้า 09:30-11:00'"
                           value={noteText}
                           onChange={(e) => setNoteText(e.target.value)}
-                          className="w-full bg-slate-50 border p-2 rounded focus:outline-none text-xs"
+                          className="w-full bg-slate-50 border border-slate-200 p-2.5 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-xs text-slate-800 leading-relaxed pr-10"
                         />
                         <button
                           id="submit-new-note-btn"
                           type="submit"
-                          className="absolute right-2 bottom-3 p-1.5 bg-indigo-600 text-white rounded-lg hover:bg-indigo-500 transition-colors cursor-pointer"
+                          className="absolute right-2 bottom-3 p-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors cursor-pointer shadow-2xs"
+                          title="บันทึกโน้ต"
                         >
                           <Send className="w-3.5 h-3.5" />
                         </button>
@@ -1456,20 +1837,75 @@ export default function LeadDetailsModal({
 
                   {/* Notes Feed */}
                   <div className="space-y-2.5">
-                    {(lead.notes || []).slice().reverse().map(note => (
-                      <div key={note.id} className="bg-white p-3 rounded-xl border border-gray-100 space-y-1 shadow-2xs">
-                        <div className="flex justify-between items-center text-[10px] text-gray-400">
-                          <span className="font-bold text-indigo-700">{note.author}</span>
-                          <span className="font-mono">
-                            {new Date(note.createdAt).toLocaleDateString("th-TH")} {new Date(note.createdAt).toLocaleTimeString("th-TH", { hour: "2-digit", minute: "2-digit" })}
-                          </span>
-                        </div>
-                        <p className="text-[11px] text-gray-700 leading-relaxed font-medium">{note.text}</p>
-                      </div>
-                    ))}
-                    {(lead.notes || []).length === 0 && (
-                      <div className="py-12 text-center text-gray-400">ยังไม่มีบันทึกข้อความเสริมเขียนเก็บไว้</div>
-                    )}
+                    {(() => {
+                      const notesList = [...(lead.notes || [])].sort((a, b) => {
+                        if (a.isPinned && !b.isPinned) return -1;
+                        if (!a.isPinned && b.isPinned) return 1;
+                        return b.createdAt.localeCompare(a.createdAt);
+                      });
+
+                      if (notesList.length === 0) {
+                        return (
+                          <div className="py-12 text-center text-slate-400 text-xs">
+                            ยังไม่มีบันทึกข้อความเสริมเขียนเก็บไว้
+                          </div>
+                        );
+                      }
+
+                      return notesList.map(note => {
+                        const isUrgent = note.priority === "urgent";
+                        const isImportant = note.priority === "important";
+
+                        return (
+                          <div 
+                            key={note.id} 
+                            id={`modal-note-card-${note.id}`}
+                            className={`p-3 rounded-xl border space-y-1.5 shadow-2xs transition-all ${
+                              note.isPinned 
+                                ? "bg-amber-50/40 border-amber-200" 
+                                : isUrgent 
+                                ? "bg-rose-50/20 border-rose-200" 
+                                : isImportant 
+                                ? "bg-amber-50/20 border-amber-200" 
+                                : "bg-white border-slate-200"
+                            }`}
+                          >
+                            <div className="flex justify-between items-center text-[10px] text-slate-400">
+                              <div className="flex flex-wrap items-center gap-1">
+                                {note.isPinned && (
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full text-[9px] font-extrabold bg-amber-100 text-amber-800 border border-amber-300">
+                                    <Pin className="w-2.5 h-2.5 fill-amber-700" /> ปักหมุด
+                                  </span>
+                                )}
+                                <span className="inline-flex items-center px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-blue-50 text-blue-700 border border-blue-100">
+                                  {note.category || "ข้อมูลสำคัญของลูกค้า"}
+                                </span>
+                                {isUrgent && (
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-rose-100 text-rose-700">
+                                    <Flame className="w-2.5 h-2.5 fill-rose-500" /> สำคัญมาก
+                                  </span>
+                                )}
+                                {isImportant && !isUrgent && (
+                                  <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded-full text-[9px] font-bold bg-amber-100 text-amber-800">
+                                    <Star className="w-2.5 h-2.5 fill-amber-500" /> สำคัญ
+                                  </span>
+                                )}
+                              </div>
+                              
+                              <div className="flex items-center gap-1.5">
+                                <span className="font-bold text-slate-700">{note.author}</span>
+                                <span className="font-mono text-[9px]">
+                                  {new Date(note.createdAt).toLocaleDateString("th-TH")}
+                                </span>
+                              </div>
+                            </div>
+                            <p className="text-xs text-slate-800 leading-relaxed font-medium whitespace-pre-wrap">
+                              {note.text}
+                            </p>
+                          </div>
+                        );
+                      });
+                    })()}
                   </div>
                 </div>
               )}
@@ -1880,6 +2316,13 @@ export default function LeadDetailsModal({
                 </div>
               )}
 
+              {/* TAB 6: CPLEX Usage Details */}
+              {activeTab === "cplex" && (
+                <div id="tab-content-cplex" className="space-y-3">
+                  <CPLEXUsageCard lead={lead} onUpdateLead={onUpdateLead} />
+                </div>
+              )}
+
             </div>
           </div>
 
@@ -2030,6 +2473,15 @@ export default function LeadDetailsModal({
           onSelectCampaign={(name) => setEditCampaign(name)}
         />
       )}
+
+      {/* Pipeline Status Reason Modal */}
+      <StatusReasonModal
+        isOpen={statusReasonModal.isOpen}
+        lead={lead}
+        targetStatus={statusReasonModal.targetStatus}
+        onClose={() => setStatusReasonModal({ isOpen: false, targetStatus: null })}
+        onConfirm={handleConfirmStatusReason}
+      />
     </div>
   );
 }

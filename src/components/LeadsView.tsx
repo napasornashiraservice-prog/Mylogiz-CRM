@@ -1,12 +1,23 @@
 import React, { useState } from "react";
-import { Lead, LeadStatus, StatusLabels, StatusColors, THAI_PROVINCES, TRANSPORT_CARRIERS } from "../types";
+import { 
+  Lead, LeadStatus, StatusLabels, StatusColors, 
+  THAI_PROVINCES, TRANSPORT_CARRIERS, PRESET_TAG_CATEGORIES, TimelineItem 
+} from "../types";
 import { 
   Plus, Search, SlidersHorizontal, Check, Star, Filter, 
   MapPin, Phone, MessageSquare, ArrowRight, Kanban, ListFilter,
-  X, Calendar, Clock, ShoppingBag, Download, Megaphone
+  X, Calendar, Clock, ShoppingBag, Download, Megaphone,
+  Tag as TagIcon, Layers, PhoneCall, AlertCircle, Lock,
+  FileSpreadsheet, Upload, CheckCircle2, XCircle
 } from "lucide-react";
-import { motion } from "motion/react";
+import { motion, AnimatePresence } from "motion/react";
 import CampaignManagerModal from "./CampaignManagerModal";
+import ImportLeadsModal from "./ImportLeadsModal";
+import StatusReasonModal from "./StatusReasonModal";
+import TagFilterDropdown from "./TagFilterDropdown";
+import TagPill from "./TagPill";
+import LeadCardTags from "./LeadCardTags";
+import { exportLeadsToExcel, getFollowUpStatus, getTagInfo, canManageTags } from "../utils/crmHelpers";
 
 interface LeadsViewProps {
   leads: Lead[];
@@ -16,16 +27,24 @@ interface LeadsViewProps {
   onDeleteCampaign?: (name: string) => Promise<void>;
   currentUser?: string | null;
   onAddLead: (lead: Omit<Lead, "id" | "createdAt" | "updatedAt" | "timeline" | "calls" | "files">) => void;
-  onUpdateLeadStatus: (id: string, newStatus: LeadStatus) => void;
+  onBatchAddLeads?: (leadsData: Omit<Lead, "id" | "createdAt" | "updatedAt" | "timeline" | "calls" | "files">[]) => Promise<{ success: boolean; count: number }>;
+  onUpdateLeadStatus: (
+    id: string, 
+    newStatus: LeadStatus,
+    reasonData?: {
+      wonReason?: string;
+      wonReasonOther?: string;
+      lostReason?: string;
+      lostReasonOther?: string;
+    }
+  ) => void;
   onSelectLead: (lead: Lead) => void;
   onUpdateLead?: (updatedLead: Lead) => void;
   onDeleteLead?: (leadId: string) => Promise<boolean> | void;
 }
 
 const ALL_CHANNELS = ["Facebook", "TikTok", "Website", "Line OA", "โทรเข้า", "คนแนะนำ", "หาเอง"];
-const ALL_TAGS = ["เปิดร้านรับส่งใหม่", "เพิ่มขนส่ง"];
 const ALL_PROVINCES = THAI_PROVINCES;
-
 
 export default function LeadsView({ 
   leads, 
@@ -35,11 +54,14 @@ export default function LeadsView({
   onDeleteCampaign,
   currentUser, 
   onAddLead, 
+  onBatchAddLeads,
   onUpdateLeadStatus, 
   onSelectLead, 
   onUpdateLead, 
   onDeleteLead 
 }: LeadsViewProps) {
+  const isTagAdmin = canManageTags(currentUser, salespersons);
+
   // UI views: "kanban" or "list"
   const [viewType, setViewType] = useState<"kanban" | "list">("kanban");
   
@@ -49,11 +71,14 @@ export default function LeadsView({
   const [selectedSalesperson, setSelectedSalesperson] = useState<string>("all");
   const [selectedChannel, setSelectedChannel] = useState("all");
   const [selectedCampaign, setSelectedCampaign] = useState<string>("all");
-  const [selectedTag, setSelectedTag] = useState("all");
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [tagMatchMode, setTagMatchMode] = useState<"ANY" | "ALL">("ANY");
+  const [selectedFollowUpStatus, setSelectedFollowUpStatus] = useState<string>("all");
   const [selectedProvince, setSelectedProvince] = useState("all");
   const [selectedScore, setSelectedScore] = useState<number | "all">("all");
   const [showFilters, setShowFilters] = useState(false);
   const [showCampaignManagerModal, setShowCampaignManagerModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
 
   // Add Lead Modal State
   const [isAddOpen, setIsAddOpen] = useState(false);
@@ -74,6 +99,14 @@ export default function LeadsView({
   const [newCompetitor, setNewCompetitor] = useState("");
   const [newSalesPerson, setNewSalesPerson] = useState("");
   const [initialNote, setInitialNote] = useState("");
+
+  // All distinct tags collected from preset and existing leads
+  const allKnownTags = Array.from(
+    new Set([
+      ...PRESET_TAG_CATEGORIES.flatMap(c => c.tags),
+      ...leads.flatMap(l => l.tags || [])
+    ])
+  ).filter(Boolean);
 
   React.useEffect(() => {
     if (currentUser) {
@@ -98,12 +131,29 @@ export default function LeadsView({
     const matchesStatus = selectedStatus === "all" || l.status === selectedStatus;
     const matchesChannel = selectedChannel === "all" || l.channel === selectedChannel;
     const matchesCampaign = selectedCampaign === "all" || l.campaign === selectedCampaign;
-    const matchesTag = selectedTag === "all" || l.tags.includes(selectedTag);
     const matchesProvince = selectedProvince === "all" || l.province === selectedProvince;
     const matchesScore = selectedScore === "all" || l.score === selectedScore;
     const matchesSalesperson = selectedSalesperson === "all" || l.salesPerson === selectedSalesperson;
 
-    return matchesSearch && matchesStatus && matchesChannel && matchesCampaign && matchesTag && matchesProvince && matchesScore && matchesSalesperson;
+    // Multi-tag matching (ANY vs. ALL)
+    let matchesTags = true;
+    if (selectedTags.length > 0) {
+      const leadTags = l.tags || [];
+      if (tagMatchMode === "ANY") {
+        matchesTags = selectedTags.some(t => leadTags.includes(t));
+      } else {
+        matchesTags = selectedTags.every(t => leadTags.includes(t));
+      }
+    }
+
+    // Follow-up status matching
+    let matchesFollowUp = true;
+    if (selectedFollowUpStatus !== "all") {
+      const followUpInfo = getFollowUpStatus(l.followUp);
+      matchesFollowUp = followUpInfo.status === selectedFollowUpStatus;
+    }
+
+    return matchesSearch && matchesStatus && matchesChannel && matchesCampaign && matchesTags && matchesFollowUp && matchesProvince && matchesScore && matchesSalesperson;
   });
 
   const hasActiveFilters = 
@@ -112,7 +162,8 @@ export default function LeadsView({
     selectedSalesperson !== "all" ||
     selectedChannel !== "all" || 
     selectedCampaign !== "all" ||
-    selectedTag !== "all" || 
+    selectedTags.length > 0 ||
+    selectedFollowUpStatus !== "all" ||
     selectedProvince !== "all" || 
     selectedScore !== "all";
 
@@ -122,99 +173,88 @@ export default function LeadsView({
     setSelectedSalesperson("all");
     setSelectedChannel("all");
     setSelectedCampaign("all");
-    setSelectedTag("all");
+    setSelectedTags([]);
+    setSelectedFollowUpStatus("all");
     setSelectedProvince("all");
     setSelectedScore("all");
   };
 
-  const handleDownloadCSV = () => {
-    // 1. Prepare headers
-    const headers = [
-      "รหัสลูกค้า",
-      "ชื่อร้านค้า/แบรนด์",
-      "ชื่อผู้ติดต่อ",
-      "เบอร์โทรศัพท์",
-      "LINE ID",
-      "Facebook",
-      "ประเภทลูกค้า",
-      "จังหวัด",
-      "ที่อยู่",
-      "ช่องทางที่ได้ Lead",
-      "ยอดจัดส่งเฉลี่ย (ชิ้น/เดือน)",
-      "ค่ายขนส่งที่สนใจ",
-      "ขนส่งคู่แข่ง",
-      "เซลส์ผู้รับผิดชอบดูแล",
-      "สถานะ",
-      "คะแนนความน่าสนใจ",
-      "วันที่ลงทะเบียนเอกสาร",
-      "วันที่เปิดใช้งาน",
-      "วันที่ส่งพัสดุแรก",
-      "วันที่สร้าง Lead"
-    ];
+  const toggleFilterTag = (tag: string) => {
+    if (selectedTags.includes(tag)) {
+      setSelectedTags(selectedTags.filter(t => t !== tag));
+    } else {
+      setSelectedTags([...selectedTags, tag]);
+    }
+  };
 
-    // Helper to escape CSV fields correctly
-    const escapeCSV = (val: any) => {
-      if (val === null || val === undefined) return "";
-      let str = String(val);
-      str = str.replace(/"/g, '""');
-      if (str.includes(",") || str.includes('"') || str.includes("\n") || str.includes("\r")) {
-        return `"${str}"`;
-      }
-      return str;
+  // Excel Export
+  const handleExportAllFiltered = () => {
+    const dateStr = new Date().toISOString().split("T")[0];
+    exportLeadsToExcel(filteredLeads, `Mylogiz_CRM_Filtered_${dateStr}.xlsx`);
+  };
+
+  // Status Reason modal state (For Won & Rejection reasons)
+  const [statusReasonModal, setStatusReasonModal] = useState<{
+    isOpen: boolean;
+    lead: Lead | null;
+    targetStatus: LeadStatus | null;
+  }>({
+    isOpen: false,
+    lead: null,
+    targetStatus: null
+  });
+
+  const handleRequestStatusChange = (lead: Lead, targetStatus: LeadStatus) => {
+    if (targetStatus === lead.status) return;
+
+    const isWon = targetStatus === LeadStatus.REGISTERED || targetStatus === LeadStatus.ACTIVATED || targetStatus === LeadStatus.REGULAR;
+    const isRejected = targetStatus === LeadStatus.NOT_INTERESTED || targetStatus === LeadStatus.LOST;
+
+    if (isWon || isRejected) {
+      setStatusReasonModal({
+        isOpen: true,
+        lead,
+        targetStatus
+      });
+    } else {
+      onUpdateLeadStatus(lead.id, targetStatus);
+    }
+  };
+
+  const handleConfirmStatusReason = ({
+    status,
+    reason,
+    reasonOther
+  }: {
+    status: LeadStatus;
+    reason: string;
+    reasonOther?: string;
+  }) => {
+    if (!statusReasonModal.lead) return;
+    const leadId = statusReasonModal.lead.id;
+    const isWon = status === LeadStatus.REGISTERED || status === LeadStatus.ACTIVATED || status === LeadStatus.REGULAR;
+    const isRejected = status === LeadStatus.NOT_INTERESTED || status === LeadStatus.LOST;
+
+    const reasonPayload = {
+      ...(isWon ? { wonReason: reason, wonReasonOther: reasonOther } : {}),
+      ...(isRejected ? { lostReason: reason, lostReasonOther: reasonOther } : {})
     };
 
-    // 2. Map leads to CSV rows
-    const rows = filteredLeads.map(l => [
-      l.customerCode || "-",
-      l.shopName || "-",
-      l.contactName || "-",
-      l.phone || "-",
-      l.lineId || "-",
-      l.facebook || "-",
-      l.customerType === "corporate" ? "นิติบุคคล" : "บุคคลธรรมดา",
-      l.province || "-",
-      l.address || "-",
-      l.channel || "-",
-      l.shipmentsPerDay || 0,
-      (l.preferredTransport || []).join(", ") || "-",
-      l.competitor || "-",
-      l.salesPerson || "-",
-      StatusLabels[l.status] || l.status,
-      "⭐".repeat(l.score || 0) || "-",
-      l.registeredDate || "-",
-      l.activationDate || "-",
-      l.firstShipmentDate || "-",
-      l.createdAt ? new Date(l.createdAt).toLocaleDateString("th-TH") : "-"
-    ]);
-
-    // 3. Create the full CSV content
-    const csvContent = [
-      headers.map(escapeCSV).join(","),
-      ...rows.map(row => row.map(escapeCSV).join(","))
-    ].join("\n");
-
-    // 4. Create blob with UTF-8 BOM so Excel opens it with correct Thai encoding
-    const blob = new Blob(["\uFEFF" + csvContent], { type: "text/csv;charset=utf-8;" });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    link.href = url;
-    link.setAttribute("download", `mylogiz_leads_export_${new Date().toISOString().split("T")[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    onUpdateLeadStatus(leadId, status, reasonPayload);
+    setStatusReasonModal({ isOpen: false, lead: null, targetStatus: null });
   };
 
   // Pipeline Columns
   const PIPELINE_COLUMNS: { id: LeadStatus; label: string; color: string }[] = [
     { id: LeadStatus.NEW_LEAD, label: "🟡 Lead ใหม่", color: "border-amber-400 bg-amber-500/10" },
     { id: LeadStatus.CONTACTED, label: "🟠 ติดต่อแล้ว", color: "border-orange-400 bg-orange-500/10" },
-    { id: LeadStatus.SENT_DETAILS, label: "🔵 ส่งรายละเอียด", color: "border-blue-400 bg-blue-500/10" },
+    { id: LeadStatus.SENT_DETAILS, label: "🔵 รอพิจารณา", color: "border-blue-400 bg-blue-500/10" },
     { id: LeadStatus.MEETING, label: "📅 นัด Meeting", color: "border-indigo-400 bg-indigo-500/10" },
     { id: LeadStatus.WAITING_DOCS, label: "🟣 รอเอกสาร", color: "border-purple-400 bg-purple-500/10" },
-    { id: LeadStatus.REGISTERED, label: "🟢 สมัครแล้ว", color: "border-green-400 bg-green-500/10" },
+    { id: LeadStatus.REGISTERED, label: "🟢 ปิดการขาย (สมัครแล้ว)", color: "border-green-400 bg-green-500/10" },
     { id: LeadStatus.ACTIVATED, label: "✅ เปิดใช้งานแล้ว", color: "border-emerald-400 bg-emerald-500/10" },
     { id: LeadStatus.LOST, label: "❌ Lost / ยกเลิก", color: "border-rose-400 bg-rose-500/10" },
-    { id: LeadStatus.NOT_INTERESTED, label: "⚪ ยังไม่สนใจ", color: "border-gray-400 bg-gray-500/10" },
+    { id: LeadStatus.NOT_INTERESTED, label: "⚪ ปฏิเสธ", color: "border-gray-400 bg-gray-500/10" },
     { id: LeadStatus.NO_CONTACT, label: "🔇 ติดต่อไม่ได้", color: "border-slate-400 bg-slate-500/10" }
   ];
 
@@ -270,7 +310,7 @@ export default function LeadsView({
     setIsAddOpen(false);
   };
 
-  const toggleTag = (tag: string) => {
+  const toggleNewTag = (tag: string) => {
     if (newTags.includes(tag)) {
       setNewTags(newTags.filter(t => t !== tag));
     } else {
@@ -287,45 +327,62 @@ export default function LeadsView({
   };
 
   return (
-    <div className="space-y-6" id="leads-container">
+    <div className="space-y-5" id="leads-container">
       {/* Header and Controls */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
-          <h2 className="text-xl font-bold text-gray-800">จัดการลูกค้าเป้าหมาย (Lead Management)</h2>
-          <p className="text-xs text-gray-500 mt-0.5">ลากและย้ายสถานะลูกค้าผ่านระบบ Sales Pipeline</p>
+          <h2 className="text-xl font-bold text-slate-800">จัดการลูกค้าเป้าหมาย (Lead Management)</h2>
+          <p className="text-xs text-slate-500 mt-0.5">
+            ค้นหา กรองสถานะ จัดการ Tags สี นัดหมายการโทร และติดตามดีลใน Sales Pipeline
+          </p>
         </div>
         
         <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
           {/* View Toggle */}
-          <div className="bg-slate-100 p-0.5 rounded-lg flex items-center border border-slate-200">
+          <div className="bg-slate-100 p-0.5 rounded-xl flex items-center border border-slate-200">
             <button 
               id="view-type-kanban"
               onClick={() => setViewType("kanban")} 
-              className={`p-1.5 rounded-md flex items-center gap-1.5 text-xs font-semibold transition-all cursor-pointer ${viewType === "kanban" ? "bg-white text-blue-600 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
+              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-bold transition-all cursor-pointer ${viewType === "kanban" ? "bg-white text-blue-600 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
             >
               <Kanban className="w-3.5 h-3.5" /> Pipeline
             </button>
             <button 
               id="view-type-list"
               onClick={() => setViewType("list")} 
-              className={`p-1.5 rounded-md flex items-center gap-1.5 text-xs font-semibold transition-all cursor-pointer ${viewType === "list" ? "bg-white text-blue-600 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
+              className={`px-3 py-1.5 rounded-lg flex items-center gap-1.5 text-xs font-bold transition-all cursor-pointer ${viewType === "list" ? "bg-white text-blue-600 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
             >
-              <ListFilter className="w-3.5 h-3.5" /> รายการ
+              <ListFilter className="w-3.5 h-3.5" /> รายการ ({filteredLeads.length})
             </button>
           </div>
 
+          {/* Export Excel Button */}
           <button 
-            id="download-leads-csv-btn"
-            onClick={handleDownloadCSV} 
-            className="flex items-center gap-2 bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-xs cursor-pointer"
+            id="download-leads-excel-btn"
+            onClick={handleExportAllFiltered} 
+            className="flex items-center gap-2 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-200 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-colors shadow-xs cursor-pointer"
+            title="ส่งออกรายการที่กรองเป็นไฟล์ Excel"
           >
-            <Download className="w-4 h-4 text-slate-500" /> ส่งออก Excel (CSV)
+            <Download className="w-4 h-4 text-emerald-600" />
+            <span>Export Excel ({filteredLeads.length})</span>
           </button>
 
+          {/* Import Excel Button */}
+          <button 
+            id="open-import-leads-excel-btn"
+            onClick={() => setShowImportModal(true)} 
+            className="flex items-center gap-2 bg-white hover:bg-blue-50 text-blue-700 border border-blue-200 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-colors shadow-xs cursor-pointer"
+            title="นำเข้าข้อมูลลูกค้าเป้าหมายหลายรายพร้อมกันจากไฟล์ Excel"
+          >
+            <Upload className="w-4 h-4 text-blue-600" />
+            <span>Import Excel</span>
+          </button>
+
+          {/* Add Lead Button */}
           <button 
             id="open-add-lead-btn"
             onClick={() => setIsAddOpen(true)} 
-            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-2 rounded-lg text-sm font-semibold transition-colors shadow-xs cursor-pointer ml-auto sm:ml-0"
+            className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-4 py-1.5 rounded-xl text-xs font-bold transition-colors shadow-xs cursor-pointer ml-auto sm:ml-0"
           >
             <Plus className="w-4 h-4" /> เพิ่ม Lead ใหม่
           </button>
@@ -333,7 +390,7 @@ export default function LeadsView({
       </div>
 
       {/* Search and Filters Bar */}
-      <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-3">
+      <div className="bg-white p-4 rounded-2xl border border-slate-200 shadow-xs space-y-3">
         <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-center">
           {/* Search Input */}
           <div className="relative flex-1">
@@ -341,10 +398,10 @@ export default function LeadsView({
             <input 
               id="lead-search-input"
               type="text" 
-              placeholder="ค้นหาชื่อลูกค้า, ชื่อร้าน/บริษัท, ผู้ติดต่อ, เบอร์โทร, LINE ID, รหัสลูกค้า..." 
+              placeholder="ค้นหาชื่อลูกค้า, ร้านค้า, บริษัท, ผู้ติดต่อ, เบอร์โทร, LINE ID, รหัสลูกค้า..." 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full pl-10 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-lg text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-700 placeholder-slate-400"
+              className="w-full pl-10 pr-9 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all text-slate-700 placeholder-slate-400 font-medium"
             />
             {searchQuery && (
               <button 
@@ -358,28 +415,45 @@ export default function LeadsView({
           </div>
 
           {/* Quick Dropdown: Lead Status Filter */}
-          <div className="w-full lg:w-52">
+          <div className="w-full lg:w-48">
             <select
               id="filter-status-select"
               value={selectedStatus}
               onChange={(e) => setSelectedStatus(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
             >
-              <option value="all">ทุกสถานะ Lead</option>
+              <option value="all">ทุกสถานะ Lead ({leads.length})</option>
               {Object.entries(StatusLabels).map(([key, label]) => (
                 <option key={key} value={key}>{label}</option>
               ))}
             </select>
           </div>
 
-          {/* Quick Dropdown: Salesperson Filter (if salespersons exist) */}
+          {/* Quick Dropdown: Follow-up Status */}
+          <div className="w-full lg:w-48">
+            <select
+              id="filter-followup-select"
+              value={selectedFollowUpStatus}
+              onChange={(e) => setSelectedFollowUpStatus(e.target.value)}
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+            >
+              <option value="all">สถานะการโทร (ทั้งหมด)</option>
+              <option value="overdue">🔴 เลยกำหนด (Overdue)</option>
+              <option value="today">🟠 ต้องโทรวันนี้ (Today)</option>
+              <option value="upcoming">🔵 กำลังมาถึง (Upcoming)</option>
+              <option value="completed">🟢 ติดตามเสร็จแล้ว</option>
+              <option value="no_followup">⚪ ยังไม่มีนัดหมาย</option>
+            </select>
+          </div>
+
+          {/* Quick Dropdown: Salesperson Filter */}
           {salespersons.length > 0 && (
-            <div className="w-full lg:w-44">
+            <div className="w-full lg:w-40">
               <select
                 id="filter-salesperson-select"
                 value={selectedSalesperson}
                 onChange={(e) => setSelectedSalesperson(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
               >
                 <option value="all">เซลส์ทั้งหมด</option>
                 {salespersons.map(sp => (
@@ -389,13 +463,22 @@ export default function LeadsView({
             </div>
           )}
 
+          {/* Compact Tag Filter Dropdown */}
+          <TagFilterDropdown
+            selectedTags={selectedTags}
+            onChangeTags={setSelectedTags}
+            tagMatchMode={tagMatchMode}
+            onChangeMatchMode={setTagMatchMode}
+            allKnownTags={allKnownTags}
+          />
+
           {/* Toggle Advanced Filters */}
           <button 
             id="toggle-filters-btn"
             onClick={() => setShowFilters(!showFilters)}
-            className={`flex items-center justify-center gap-2 px-3.5 py-2 border rounded-lg text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${showFilters ? "border-blue-200 bg-blue-50 text-blue-600" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-600"}`}
+            className={`flex items-center justify-center gap-2 px-3.5 py-2 border rounded-xl text-xs font-semibold transition-all cursor-pointer whitespace-nowrap ${showFilters ? "border-blue-200 bg-blue-50 text-blue-600" : "border-slate-200 bg-white hover:bg-slate-50 text-slate-600"}`}
           >
-            <SlidersHorizontal className="w-4 h-4" /> ตัวกรองเพิ่มเติม {showFilters ? "(ซ่อน)" : ""}
+            <SlidersHorizontal className="w-4 h-4" /> ตัวกรองละเอียด {showFilters ? "(ซ่อน)" : ""}
           </button>
 
           {/* Reset Filters Button */}
@@ -403,7 +486,7 @@ export default function LeadsView({
             <button
               id="reset-filters-btn"
               onClick={resetFilters}
-              className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-lg font-semibold transition-all cursor-pointer whitespace-nowrap"
+              className="flex items-center justify-center gap-1.5 px-3 py-2 text-xs text-rose-600 hover:bg-rose-50 border border-rose-200 rounded-xl font-bold transition-all cursor-pointer whitespace-nowrap"
             >
               <X className="w-3.5 h-3.5" /> ล้างตัวกรอง
             </button>
@@ -424,7 +507,7 @@ export default function LeadsView({
                 id="filter-campaign-select"
                 value={selectedCampaign} 
                 onChange={(e) => setSelectedCampaign(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
                 <option value="all">ทั้งหมด ทุกแคมเปญ</option>
                 {campaigns.map(c => <option key={c} value={c}>{c}</option>)}
@@ -437,7 +520,7 @@ export default function LeadsView({
                 id="filter-channel-select"
                 value={selectedChannel} 
                 onChange={(e) => setSelectedChannel(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
                 <option value="all">ทั้งหมด ทุกช่องทาง</option>
                 {ALL_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
@@ -450,162 +533,169 @@ export default function LeadsView({
                 id="filter-province-select"
                 value={selectedProvince} 
                 onChange={(e) => setSelectedProvince(e.target.value)}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
-                <option value="all">ทั้งหมด ทุกจังหวัด</option>
+                <option value="all">ทุกจังหวัด</option>
                 {ALL_PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
               </select>
             </div>
 
             <div>
-              <label className="block text-slate-500 font-semibold mb-1">คะแนน Lead Score</label>
+              <label className="block text-slate-500 font-semibold mb-1">ระดับคะแนน (Lead Score)</label>
               <select 
                 id="filter-score-select"
-                value={selectedScore.toString()} 
+                value={selectedScore} 
                 onChange={(e) => setSelectedScore(e.target.value === "all" ? "all" : Number(e.target.value))}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
-                <option value="all">ทั้งหมด ทุกคะแนน</option>
-                <option value="5">⭐⭐⭐⭐⭐ พร้อมปิดดีล</option>
-                <option value="4">⭐⭐⭐⭐ สนใจมาก</option>
-                <option value="3">⭐⭐⭐ ปานกลาง</option>
-                <option value="2">⭐⭐ ไม่พร้อม</option>
-                <option value="1">⭐ ยังไม่สนใจ</option>
+                <option value="all">ทุกระดับคะแนน</option>
+                <option value={5}>⭐⭐⭐⭐⭐ (5 ดาว - พร้อมปิดการขาย)</option>
+                <option value={4}>⭐⭐⭐⭐ (4 ดาว - โอกาสสูง)</option>
+                <option value={3}>⭐⭐⭐ (3 ดาว - ปานกลาง)</option>
+                <option value={2}>⭐⭐ (2 ดาว - สนใจน้อย)</option>
+                <option value={1}>⭐ (1 ดาว - โอกาสต่ำ)</option>
               </select>
             </div>
           </motion.div>
         )}
-
-        {/* Filter Summary Counter */}
-        {hasActiveFilters && (
-          <div className="flex items-center justify-between pt-1 text-[11px] text-slate-500 border-t border-slate-100">
-            <span>
-              ผลการค้นหา/กรองข้อมูล: พบล่าสุด <strong className="text-blue-600 font-bold">{filteredLeads.length}</strong> จากทั้งหมด {leads.length} รายการ
-            </span>
-          </div>
-        )}
       </div>
 
-      {/* Visual Workspace Rendering */}
+      {/* VIEW MODES */}
       {viewType === "kanban" ? (
-        /* KANBAN BOARD VIEW */
-        <div id="kanban-scroller" className="flex gap-4 overflow-x-auto pb-6 pt-2 snap-x select-none min-h-[480px]">
-          {PIPELINE_COLUMNS.map(col => {
-            const columnLeads = filteredLeads.filter(l => l.status === col.id);
-            const totalShipments = columnLeads.reduce((acc, l) => acc + l.shipmentsPerDay, 0);
-
+        /* KANBAN PIPELINE VIEW */
+        <div id="pipeline-board-container" className="flex gap-4 overflow-x-auto pb-6 pt-1 snap-x">
+          {PIPELINE_COLUMNS.map((column) => {
+            const columnLeads = filteredLeads.filter((l) => l.status === column.id);
             return (
               <div 
-                key={col.id} 
-                id={`kanban-col-${col.id}`}
-                className={`w-72 shrink-0 rounded-xl border border-slate-200 bg-slate-50 flex flex-col snap-start overflow-hidden shadow-xs`}
+                key={column.id} 
+                id={`kanban-col-${column.id}`}
+                className="flex-shrink-0 w-80 bg-slate-50/80 rounded-2xl p-3 border border-slate-200/80 flex flex-col max-h-[78vh]"
               >
                 {/* Column Header */}
-                <div className={`p-3 border-b border-slate-200 flex items-center justify-between bg-white`}>
-                  <div className="flex flex-col">
-                    <span className="text-xs font-bold text-slate-800">{col.label}</span>
-                    <span className="text-[10px] text-slate-400 font-medium">รวมยอดพัสดุ: {totalShipments} ชิ้น/เดือน</span>
+                <div className="flex justify-between items-center mb-3 px-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-xs text-slate-800">{column.label}</span>
+                    <span className="bg-slate-200 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded-full">
+                      {columnLeads.length}
+                    </span>
                   </div>
-                  <span className="bg-slate-100 text-slate-700 text-[10px] px-2 py-0.5 rounded-full font-bold">
-                    {columnLeads.length}
-                  </span>
                 </div>
 
-                {/* Column Body - Leads Cards List */}
-                <div className="p-2 space-y-2.5 overflow-y-auto flex-1 max-h-[500px]">
-                  {columnLeads.map(lead => (
-                    <motion.div
-                      key={lead.id}
-                      id={`kanban-card-${lead.id}`}
-                      layoutId={`lead-${lead.id}`}
-                      onClick={() => onSelectLead(lead)}
-                      className="bg-white p-3 rounded-lg border border-slate-200 hover:border-blue-500 hover:shadow-sm cursor-pointer transition-all space-y-2 relative"
-                    >
-                      {/* Shop Name & Score */}
-                      <div className="flex items-start justify-between gap-1">
-                        <h4 className="text-xs font-bold text-gray-800 line-clamp-2 pr-1">{lead.shopName}</h4>
-                        <div className="flex shrink-0 items-center">
-                          {[1, 2, 3, 4, 5].map((star) => (
-                            <button
-                              key={star}
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                if (onUpdateLead) {
-                                  onUpdateLead({ ...lead, score: star });
-                                }
-                              }}
-                              className="p-[1px] hover:scale-125 transition-transform cursor-pointer group"
-                              title={`ปรับเป็น ${star} ดาว`}
-                            >
-                              <Star 
-                                className={`w-3 h-3 ${star <= lead.score ? "text-amber-400 fill-amber-400" : "text-gray-200 group-hover:text-amber-300"}`} 
+                {/* Cards Container */}
+                <div className="space-y-3 overflow-y-auto pr-1 flex-1">
+                  {columnLeads.map((lead) => {
+                    const followUpInfo = getFollowUpStatus(lead.followUp);
+                    return (
+                      <motion.div
+                        key={lead.id}
+                        id={`kanban-card-${lead.id}`}
+                        layout
+                        initial={{ opacity: 0, scale: 0.95 }}
+                        animate={{ opacity: 1, scale: 1 }}
+                        exit={{ opacity: 0, scale: 0.95 }}
+                        onClick={() => onSelectLead(lead)}
+                        className="p-3.5 bg-white rounded-xl border border-slate-200 hover:border-blue-300 shadow-xs hover:shadow-md transition-all cursor-pointer relative group space-y-2.5"
+                      >
+                        {/* Header Row: Customer Code + Shop Name */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="min-w-0">
+                            <span className="font-bold text-slate-900 text-xs group-hover:text-blue-600 transition-colors block truncate">
+                              {lead.shopName}
+                            </span>
+                            <span className="text-[10px] text-slate-400 block truncate">
+                              ผู้ติดต่อ: {lead.contactName || "-"}
+                            </span>
+                          </div>
+
+                          {lead.customerType === "corporate" && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0">
+                              🏢 นิติบุคคล
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Follow-up Alert / Scheduled Row */}
+                        {lead.followUp?.date && (
+                          <div className={`px-2 py-1 rounded-lg border text-[10px] font-bold flex items-center justify-between gap-1 ${followUpInfo.badgeClass}`}>
+                            <span className="flex items-center gap-1 truncate">
+                              <Clock className="w-3 h-3 shrink-0" />
+                              <span>{followUpInfo.label}: {lead.followUp.date} {lead.followUp.time || ""}</span>
+                            </span>
+                            {lead.phone && (
+                              <a
+                                href={`tel:${lead.phone}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="p-1 hover:bg-black/10 rounded transition-colors"
+                                title="โทรทันที"
+                              >
+                                <PhoneCall className="w-3 h-3" />
+                              </a>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Tags Badges Row (with compact pills) */}
+                        {lead.tags && lead.tags.length > 0 && (
+                          <LeadCardTags tags={lead.tags} maxVisible={3} size="xs" />
+                        )}
+
+                        {/* Reason indicator badge if Won or Rejected */}
+                        {lead.wonReason && (lead.status === LeadStatus.REGISTERED || lead.status === LeadStatus.ACTIVATED || lead.status === LeadStatus.REGULAR) && (
+                          <div 
+                            className="px-2 py-1 bg-emerald-50 text-emerald-800 border border-emerald-200 rounded-lg text-[10px] font-semibold flex items-center gap-1 truncate"
+                            title={`สาเหตุปิดการขาย: ${lead.wonReason}${lead.wonReasonOther ? ` (${lead.wonReasonOther})` : ""}`}
+                          >
+                            <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />
+                            <span className="truncate">ปิดการขาย: {lead.wonReason}</span>
+                          </div>
+                        )}
+
+                        {lead.lostReason && (lead.status === LeadStatus.NOT_INTERESTED || lead.status === LeadStatus.LOST) && (
+                          <div 
+                            className="px-2 py-1 bg-rose-50 text-rose-800 border border-rose-200 rounded-lg text-[10px] font-semibold flex items-center gap-1 truncate"
+                            title={`สาเหตุที่ปฏิเสธ: ${lead.lostReason}${lead.lostReasonOther ? ` (${lead.lostReasonOther})` : ""}`}
+                          >
+                            <XCircle className="w-3 h-3 text-rose-500 shrink-0" />
+                            <span className="truncate">ปฏิเสธ: {lead.lostReason}</span>
+                          </div>
+                        )}
+
+                        {/* Location, Volume & Score */}
+                        <div className="flex items-center justify-between text-[11px] text-slate-500 pt-1 border-t border-slate-100">
+                          <div className="flex items-center gap-1 truncate">
+                            <MapPin className="w-3 h-3 text-slate-400 shrink-0" />
+                            <span className="truncate">{lead.province}</span>
+                          </div>
+
+                          <div className="flex items-center gap-0.5">
+                            {[1, 2, 3, 4, 5].map((star) => (
+                              <Star
+                                key={star}
+                                className={`w-3 h-3 ${star <= lead.score ? "text-amber-400 fill-amber-400" : "text-slate-200"}`}
                               />
-                            </button>
-                          ))}
+                            ))}
+                          </div>
                         </div>
-                      </div>
 
-                      {/* Lead Contact Info Block */}
-                      <div className="space-y-1 text-[10px] text-gray-500">
-                        <p className="flex items-center gap-1">
-                          <Phone className="w-3 h-3 text-gray-400 shrink-0" /> {lead.phone}
-                        </p>
-                        <p className="flex items-center gap-1">
-                          <MapPin className="w-3 h-3 text-gray-400 shrink-0" /> {lead.province}
-                        </p>
-                        <p className="flex items-center gap-1">
-                          <ShoppingBag className="w-3 h-3 text-blue-500 shrink-0" /> ยอดส่ง: <span className="font-bold text-slate-700">{lead.shipmentsPerDay} ชิ้น/เดือน</span>
-                        </p>
-                      </div>
-
-                      {/* Tags */}
-                      {lead.tags.length > 0 && (
-                        <div className="flex flex-wrap gap-1">
-                          {lead.tags.slice(0, 3).map(t => (
-                            <span key={t} className="text-[9px] bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded font-medium">
-                              {t}
-                            </span>
-                          ))}
-                          {lead.tags.length > 3 && (
-                            <span className="text-[9px] text-gray-400">+{lead.tags.length - 3}</span>
-                          )}
+                        {/* Quick Status Pipeline Shift dropdown */}
+                        <div className="pt-1" onClick={(e) => e.stopPropagation()}>
+                          <select
+                            value={lead.status}
+                            onChange={(e) => handleRequestStatusChange(lead, e.target.value as LeadStatus)}
+                            className="w-full bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-lg px-2 py-1 text-[10px] font-bold text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer"
+                          >
+                            {PIPELINE_COLUMNS.map((opt) => (
+                              <option key={opt.id} value={opt.id}>ย้ายไป: {opt.label}</option>
+                            ))}
+                          </select>
                         </div>
-                      )}
-
-                      {/* Card Footer */}
-                      <div className="border-t border-gray-50 pt-2 flex items-center justify-between text-[9px] text-gray-400 font-medium">
-                        <div className="flex items-center gap-1 overflow-hidden">
-                          <span>{lead.channel}</span>
-                          {lead.campaign && (
-                            <span className="bg-indigo-50 text-indigo-700 px-1.5 py-0.5 rounded font-bold flex items-center gap-0.5 truncate shrink-0" title={`แคมเปญ: ${lead.campaign}`}>
-                              <Megaphone className="w-2.5 h-2.5 shrink-0" />
-                              <span className="truncate max-w-[90px]">{lead.campaign}</span>
-                            </span>
-                          )}
-                        </div>
-                        <span className="text-gray-400 shrink-0 ml-1">{lead.salesPerson}</span>
-                      </div>
-
-                      {/* Move Controls inside Card to allow switching without DND package */}
-                      <div className="mt-2 pt-2 border-t border-gray-50 flex items-center gap-1 justify-end">
-                        <select
-                          id={`move-status-select-${lead.id}`}
-                          value={lead.status}
-                          onClick={(e) => e.stopPropagation()}
-                          onChange={(e) => onUpdateLeadStatus(lead.id, e.target.value as LeadStatus)}
-                          className="bg-gray-50 hover:bg-gray-100 border border-gray-200 text-[9px] text-gray-500 rounded px-1.5 py-0.5 focus:outline-none"
-                        >
-                          {PIPELINE_COLUMNS.map(opt => (
-                            <option key={opt.id} value={opt.id}>ย้ายไป: {opt.label}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </motion.div>
-                  ))}
+                      </motion.div>
+                    );
+                  })}
 
                   {columnLeads.length === 0 && (
-                    <div className="py-12 text-center text-gray-300 text-[11px] border border-dashed border-gray-200 rounded-lg">
+                    <div className="py-12 text-center text-slate-400 text-xs border border-dashed border-slate-200 rounded-xl">
                       ไม่มีลูกค้าในขั้นนี้
                     </div>
                   )}
@@ -616,79 +706,138 @@ export default function LeadsView({
         </div>
       ) : (
         /* STANDARD LIST / TABLE VIEW */
-        <div id="list-view-table-wrapper" className="bg-white rounded-xl border border-slate-200 shadow-sm overflow-hidden">
+        <div id="list-view-table-wrapper" className="bg-white rounded-2xl border border-slate-200 shadow-xs overflow-hidden">
           <div className="overflow-x-auto">
             <table id="leads-list-table" className="w-full text-left border-collapse text-xs">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 font-semibold uppercase text-[10px]">
-                  <th className="p-4 pl-6">ชื่อร้าน / ผู้ติดต่อ</th>
-                  <th className="p-4">เบอร์โทร / LINE ID</th>
-                  <th className="p-4">จังหวัด</th>
-                  <th className="p-4">ช่องทาง</th>
-                  <th className="p-4">ยอดส่ง (เดือน)</th>
-                  <th className="p-4">สถานะ</th>
-                  <th className="p-4">ผู้ดูแล</th>
-                  <th className="p-4 text-center">Score</th>
+                <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 font-bold uppercase text-[10px]">
+                  <th className="p-3.5 pl-5">ชื่อร้าน / ผู้ติดต่อ</th>
+                  <th className="p-3.5">เบอร์โทร / LINE</th>
+                  <th className="p-3.5">Tags สี</th>
+                  <th className="p-3.5">นัดโทรติดตาม (Follow-up)</th>
+                  <th className="p-3.5">สถานะ Pipeline</th>
+                  <th className="p-3.5">ผู้ดูแล</th>
+                  <th className="p-3.5 text-center">Score</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
-                {filteredLeads.map(lead => (
-                  <tr 
-                    key={lead.id} 
-                    id={`list-row-${lead.id}`}
-                    onClick={() => onSelectLead(lead)}
-                    className="hover:bg-slate-50/50 cursor-pointer transition-colors"
-                  >
-                    <td className="p-4 pl-6 font-medium text-gray-800">
-                      <div className="space-y-0.5">
-                        <span className="font-bold text-gray-900 block">{lead.shopName}</span>
-                        <span className="text-gray-400 text-[10px]">{lead.contactName || "ไม่ระบุผู้ติดต่อ"}</span>
-                      </div>
-                    </td>
-                    <td className="p-4 text-gray-600 font-mono">
-                      <div className="space-y-0.5">
-                        <span className="block">{lead.phone}</span>
-                        <span className="text-gray-400 text-[10px]">Line: {lead.lineId || "-"}</span>
-                      </div>
-                    </td>
-                    <td className="p-4 text-gray-600">{lead.province}</td>
-                    <td className="p-4 text-gray-600">
-                      <span className="bg-slate-100 px-2 py-0.5 rounded text-[10px]">{lead.channel}</span>
-                    </td>
-                    <td className="p-4 font-bold text-gray-700 font-mono">{lead.shipmentsPerDay} ชิ้น/เดือน</td>
-                    <td className="p-4">
-                      <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${StatusColors[lead.status]}`}>
-                        {StatusLabels[lead.status]}
-                      </span>
-                    </td>
-                    <td className="p-4 text-gray-500">{lead.salesPerson}</td>
-                    <td className="p-4 text-center">
-                      <div className="flex justify-center items-center gap-0.5">
-                        {[1, 2, 3, 4, 5].map((star) => (
-                          <button
-                            key={star}
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (onUpdateLead) {
-                                onUpdateLead({ ...lead, score: star });
-                              }
-                            }}
-                            className="p-0.5 hover:scale-125 transition-transform cursor-pointer group"
-                            title={`ปรับเป็น ${star} ดาว`}
-                          >
-                            <Star 
-                              className={`w-3.5 h-3.5 ${star <= lead.score ? "text-amber-400 fill-amber-400" : "text-gray-200 group-hover:text-amber-300"}`} 
-                            />
-                          </button>
-                        ))}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {filteredLeads.map(lead => {
+                  const followUpInfo = getFollowUpStatus(lead.followUp);
+                  return (
+                    <tr 
+                      key={lead.id} 
+                      id={`list-row-${lead.id}`}
+                      onClick={() => onSelectLead(lead)}
+                      className="hover:bg-slate-50/70 cursor-pointer transition-colors"
+                    >
+                      <td className="p-3.5 pl-5 font-medium text-slate-800">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-slate-900">{lead.shopName}</span>
+                            {lead.customerType === "corporate" && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
+                                🏢 นิติบุคคล
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-slate-400 text-[10px] block">ผู้ติดต่อ: {lead.contactName || "ไม่ระบุ"}</span>
+                        </div>
+                      </td>
+
+                      <td className="p-3.5 text-slate-600 font-mono">
+                        <div className="space-y-0.5">
+                          <div className="flex items-center gap-1.5">
+                            <span className="font-bold text-slate-800">{lead.phone || "-"}</span>
+                            {lead.phone && (
+                              <a
+                                href={`tel:${lead.phone}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="p-1 hover:bg-emerald-50 text-emerald-600 rounded transition-colors"
+                                title="โทรออก"
+                              >
+                                <PhoneCall className="w-3.5 h-3.5" />
+                              </a>
+                            )}
+                          </div>
+                          <span className="text-slate-400 text-[10px] block">Line: {lead.lineId || "-"}</span>
+                        </div>
+                      </td>
+
+                      <td className="p-3.5">
+                        <LeadCardTags tags={lead.tags} maxVisible={3} size="xs" />
+                      </td>
+
+                      <td className="p-3.5">
+                        {lead.followUp?.date ? (
+                          <div className="space-y-0.5">
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold border ${followUpInfo.badgeClass}`}>
+                              <Clock className="w-3 h-3" />
+                              <span>{followUpInfo.label}</span>
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-mono block">
+                              {lead.followUp.date} {lead.followUp.time || ""}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-slate-300 text-[10px]">ยังไม่มีนัด</span>
+                        )}
+                      </td>
+
+                      <td className="p-3.5" onClick={(e) => e.stopPropagation()}>
+                        <div className="space-y-1">
+                          <span className={`inline-block px-2.5 py-1 rounded-full text-[10px] font-bold border ${StatusColors[lead.status]}`}>
+                            {StatusLabels[lead.status]}
+                          </span>
+                          {lead.wonReason && (lead.status === LeadStatus.REGISTERED || lead.status === LeadStatus.ACTIVATED || lead.status === LeadStatus.REGULAR) && (
+                            <span 
+                              className="block text-[10px] text-emerald-700 font-semibold truncate max-w-[140px]" 
+                              title={`สาเหตุปิดการขาย: ${lead.wonReason}${lead.wonReasonOther ? ` (${lead.wonReasonOther})` : ""}`}
+                            >
+                              🎯 {lead.wonReason}
+                            </span>
+                          )}
+                          {lead.lostReason && (lead.status === LeadStatus.NOT_INTERESTED || lead.status === LeadStatus.LOST) && (
+                            <span 
+                              className="block text-[10px] text-rose-700 font-semibold truncate max-w-[140px]" 
+                              title={`สาเหตุที่ปฏิเสธ: ${lead.lostReason}${lead.lostReasonOther ? ` (${lead.lostReasonOther})` : ""}`}
+                            >
+                              ❌ {lead.lostReason}
+                            </span>
+                          )}
+                        </div>
+                      </td>
+
+                      <td className="p-3.5 text-slate-600 font-semibold">{lead.salesPerson || "-"}</td>
+
+                      <td className="p-3.5 text-center">
+                        <div className="flex justify-center items-center gap-0.5">
+                          {[1, 2, 3, 4, 5].map((star) => (
+                            <button
+                              key={star}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                if (onUpdateLead) {
+                                  onUpdateLead({ ...lead, score: star });
+                                }
+                              }}
+                              className="p-0.5 hover:scale-125 transition-transform cursor-pointer group"
+                              title={`ปรับเป็น ${star} ดาว`}
+                            >
+                              <Star 
+                                className={`w-3.5 h-3.5 ${star <= lead.score ? "text-amber-400 fill-amber-400" : "text-slate-200 group-hover:text-amber-300"}`} 
+                              />
+                            </button>
+                          ))}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+
                 {filteredLeads.length === 0 && (
                   <tr>
-                    <td colSpan={8} className="py-12 text-center text-gray-400">
+                    <td colSpan={7} className="py-12 text-center text-slate-400">
                       ไม่พบผลการค้นหาตามคีย์เวิร์ดหรือตัวกรองที่เลือก
                     </td>
                   </tr>
@@ -705,18 +854,18 @@ export default function LeadsView({
           <motion.div 
             initial={{ scale: 0.95, opacity: 0 }} 
             animate={{ scale: 1, opacity: 1 }} 
-            className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto"
+            className="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-2xl w-full p-6 space-y-4 max-h-[90vh] overflow-y-auto"
           >
             {/* Modal Header */}
-            <div className="flex justify-between items-center border-b border-slate-200 pb-3">
+            <div className="flex justify-between items-center border-b border-slate-100 pb-3">
               <div>
-                <h3 className="text-lg font-bold text-gray-900">เพิ่มลูกค้าเป้าหมายใหม่ (Create Lead)</h3>
-                <p className="text-xs text-gray-400">กรอกข้อมูลที่จำเป็นของร้านค้าเพื่อบันทึกและรันขั้นตอนการปิดการขาย</p>
+                <h3 className="text-base font-bold text-slate-800">เพิ่มลูกค้าเป้าหมายใหม่ (Create Lead)</h3>
+                <p className="text-xs text-slate-400">กรอกข้อมูลที่จำเป็นของร้านค้าเพื่อบันทึกและรันขั้นตอนการปิดการขาย</p>
               </div>
               <button 
                 id="close-add-lead-modal-btn"
                 onClick={() => setIsAddOpen(false)} 
-                className="p-1.5 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-50 transition-colors"
+                className="p-1.5 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-50 transition-colors cursor-pointer"
               >
                 <X className="w-5 h-5" />
               </button>
@@ -727,7 +876,7 @@ export default function LeadsView({
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {/* Shop Name */}
                 <div className="space-y-1">
-                  <label className="block text-gray-600 font-bold">ชื่อร้านค้า / แบรนด์ <span className="text-rose-500">*</span></label>
+                  <label className="block text-slate-600 font-bold">ชื่อร้านค้า / แบรนด์ <span className="text-rose-500">*</span></label>
                   <input 
                     id="new-lead-shop-name"
                     type="text" 
@@ -735,244 +884,184 @@ export default function LeadsView({
                     placeholder="เช่น ร้านชลธิชา บิวตี้" 
                     value={newShopName}
                     onChange={(e) => setNewShopName(e.target.value)}
-                    className="w-full bg-slate-50 border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
                   />
                 </div>
 
                 {/* Contact Name */}
                 <div className="space-y-1">
-                  <label className="block text-gray-600 font-bold">ชื่อผู้ติดต่อ</label>
+                  <label className="block text-slate-600 font-bold">ชื่อผู้ติดต่อ</label>
                   <input 
                     id="new-lead-contact-name"
                     type="text" 
                     placeholder="เช่น คุณชลธิชา" 
                     value={newContactName}
                     onChange={(e) => setNewContactName(e.target.value)}
-                    className="w-full bg-slate-50 border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
                   />
                 </div>
 
                 {/* Phone */}
                 <div className="space-y-1">
-                  <label className="block text-gray-600 font-bold">เบอร์โทรศัพท์ <span className="text-rose-500">*</span></label>
+                  <label className="block text-slate-600 font-bold">เบอร์โทรศัพท์ <span className="text-rose-500">*</span></label>
                   <input 
                     id="new-lead-phone"
                     type="tel" 
                     required
-                    placeholder="เช่น 081-234-5678" 
+                    placeholder="เช่น 0812345678" 
                     value={newPhone}
                     onChange={(e) => setNewPhone(e.target.value)}
-                    className="w-full bg-slate-50 border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white font-mono"
                   />
                 </div>
 
                 {/* LINE ID */}
                 <div className="space-y-1">
-                  <label className="block text-gray-600 font-bold">LINE ID</label>
+                  <label className="block text-slate-600 font-bold">LINE ID</label>
                   <input 
                     id="new-lead-line-id"
                     type="text" 
-                    placeholder="เช่น chon.beauty" 
+                    placeholder="เช่น @chonthicha_shop" 
                     value={newLineId}
                     onChange={(e) => setNewLineId(e.target.value)}
-                    className="w-full bg-slate-50 border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
-                  />
-                </div>
-
-                {/* Facebook */}
-                <div className="space-y-1">
-                  <label className="block text-gray-600 font-bold">Facebook Page / Profile</label>
-                  <input 
-                    id="new-lead-facebook"
-                    type="text" 
-                    placeholder="เช่น Chonlicha Beauty Official" 
-                    value={newFacebook}
-                    onChange={(e) => setNewFacebook(e.target.value)}
-                    className="w-full bg-slate-50 border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
                   />
                 </div>
 
                 {/* Customer Type */}
                 <div className="space-y-1">
-                  <label className="block text-gray-600 font-bold">ประเภทลูกค้า (บุคคล/นิติบุคคล)</label>
+                  <label className="block text-slate-600 font-bold">ประเภทลูกค้า</label>
                   <select 
                     id="new-lead-customer-type"
                     value={newCustomerType}
                     onChange={(e) => setNewCustomerType(e.target.value as "individual" | "corporate")}
-                    className="w-full bg-slate-50 border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white font-semibold"
                   >
                     <option value="individual">👤 บุคคลธรรมดา</option>
-                    <option value="corporate">🏢 นิติบุคคล</option>
-                  </select>
-                </div>
-
-                {/* Province */}
-                <div className="space-y-1">
-                  <label className="block text-gray-600 font-bold">จังหวัดที่จัดส่งพัสดุ</label>
-                  <select 
-                    id="new-lead-province"
-                    value={newProvince}
-                    onChange={(e) => setNewProvince(e.target.value)}
-                    className="w-full bg-slate-50 border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
-                  >
-                    {ALL_PROVINCES.map(p => <option key={p} value={p}>{p}</option>)}
-                    <option value="อื่นๆ">อื่นๆ (ต่างจังหวัด)</option>
+                    <option value="corporate">🏢 นิติบุคคล (บริษัท / ห้างหุ้นส่วน)</option>
                   </select>
                 </div>
 
                 {/* Channel */}
                 <div className="space-y-1">
-                  <label className="block text-gray-600 font-bold">ช่องทางที่ได้ Lead</label>
+                  <label className="block text-slate-600 font-bold">ช่องทางที่เข้ามา (Lead Source)</label>
                   <select 
                     id="new-lead-channel"
                     value={newChannel}
                     onChange={(e) => setNewChannel(e.target.value)}
-                    className="w-full bg-slate-50 border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
                   >
-                    {ALL_CHANNELS.map(c => <option key={c} value={c}>{c}</option>)}
+                    {ALL_CHANNELS.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
                   </select>
                 </div>
 
                 {/* Campaign */}
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <label className="block text-gray-600 font-bold">แคมเปญการตลาด (Campaign)</label>
+                    <label className="block text-slate-600 font-bold">แคมเปญการตลาด</label>
                     <button
                       type="button"
                       onClick={() => setShowCampaignManagerModal(true)}
-                      className="text-[11px] text-indigo-600 hover:text-indigo-800 font-bold flex items-center gap-1 cursor-pointer"
+                      className="text-blue-600 hover:underline font-bold text-[10px]"
                     >
-                      <Plus className="w-3 h-3" />
-                      <span>จัดการแคมเปญ (+ / -)</span>
+                      + จัดการแคมเปญ
                     </button>
                   </div>
                   <select 
                     id="new-lead-campaign"
                     value={newCampaign}
-                    onChange={(e) => {
-                      if (e.target.value === "__add_new__") {
-                        setShowCampaignManagerModal(true);
-                      } else {
-                        setNewCampaign(e.target.value);
-                      }
-                    }}
-                    className="w-full bg-slate-50 border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white text-slate-800"
+                    onChange={(e) => setNewCampaign(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
                   >
-                    <option value="">-- ไม่ได้ระบุแคมเปญ --</option>
-                    {campaigns.map(c => <option key={c} value={c}>{c}</option>)}
-                    <option value="__add_new__">➕ เพิ่ม/จัดการแคมเปญ...</option>
+                    <option value="">-- ไม่ระบุแคมเปญ --</option>
+                    {campaigns.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
                   </select>
                 </div>
 
-                {/* Lead Score */}
+                {/* Province */}
                 <div className="space-y-1">
-                  <label className="block text-gray-600 font-bold">คะแนนความน่าสนใจ (Lead Score)</label>
-                  <div className="flex gap-1.5 py-2">
-                    {[1, 2, 3, 4, 5].map((num) => (
-                      <button
-                        key={num}
-                        id={`new-lead-score-star-${num}`}
-                        type="button"
-                        onClick={() => setNewScore(num)}
-                        className="p-1 hover:scale-110 transition-transform"
-                      >
-                        <Star className={`w-6 h-6 ${num <= newScore ? "text-amber-400 fill-amber-400" : "text-gray-200"}`} />
-                      </button>
+                  <label className="block text-slate-600 font-bold">จังหวัด</label>
+                  <select 
+                    id="new-lead-province"
+                    value={newProvince}
+                    onChange={(e) => setNewProvince(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                  >
+                    {ALL_PROVINCES.map((p) => (
+                      <option key={p} value={p}>{p}</option>
                     ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Address */}
-              <div className="space-y-1">
-                <label className="block text-gray-600 font-bold">ที่อยู่อย่างละเอียด (สำหรับใช้ทำเรื่องเรียกรถเข้ารับพัสดุ)</label>
-                <textarea 
-                  id="new-lead-address"
-                  rows={2}
-                  placeholder="กรอกที่อยู่อย่างละเอียด..."
-                  value={newAddress}
-                  onChange={(e) => setNewAddress(e.target.value)}
-                  className="w-full bg-slate-50 border border-gray-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:bg-white"
-                />
-              </div>
-
-              {/* Logistics Specific Fields */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-blue-50/50 p-3.5 rounded-xl border border-blue-100">
-                {/* Shipments per day */}
-                <div className="space-y-1 col-span-1">
-                  <label className="block text-slate-800 font-bold">ยอดจัดส่งพัสดุเฉลี่ย (ชิ้น/เดือน)</label>
-                  <input 
-                    id="new-lead-shipments-per-day"
-                    type="number" 
-                    min={0}
-                    value={newShipmentsPerDay}
-                    onChange={(e) => setNewShipmentsPerDay(Number(e.target.value))}
-                    className="w-full bg-white border border-blue-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                {/* Competitor */}
-                <div className="space-y-1 col-span-1">
-                  <label className="block text-slate-800 font-bold">ขนส่ง/ระบบคู่แข่งที่ใช้อยู่</label>
-                  <input 
-                    id="new-lead-competitor"
-                    type="text" 
-                    placeholder="เช่น Shipnity, Kerry, Flash เดิม"
-                    value={newCompetitor}
-                    onChange={(e) => setNewCompetitor(e.target.value)}
-                    className="w-full bg-white border border-blue-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+                  </select>
                 </div>
 
                 {/* Salesperson */}
-                <div className="space-y-1 col-span-1">
-                  <label className="block text-slate-800 font-bold">เซลส์ผู้รับผิดชอบดูแล</label>
+                <div className="space-y-1">
+                  <label className="block text-slate-600 font-bold">ผู้ดูแล (Salesperson)</label>
                   <select 
                     id="new-lead-salesperson"
                     value={newSalesPerson}
                     onChange={(e) => setNewSalesPerson(e.target.value)}
-                    className="w-full bg-white border border-blue-200 rounded-lg p-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
                   >
-                    {salespersons.map((sp) => (
-                      <option key={sp} value={sp}>{sp}</option>
+                    {salespersons.map((s) => (
+                      <option key={s} value={s}>{s}</option>
                     ))}
                   </select>
                 </div>
 
-                {/* Transport Options (flash/ dhl/ spx /kex /best express / ไปรษณีย์ / ขนส่งต่างประเทศ / ทั้งหมด) */}
-                <div className="space-y-1 col-span-3">
-                  <label className="block text-slate-800 font-bold">ค่ายขนส่งที่ลูกค้าสนใจเป็นพิเศษ</label>
-                  <div className="flex flex-wrap gap-x-4 gap-y-2 mt-1">
-                    {TRANSPORT_CARRIERS.map((t) => (
-                      <label key={t} className="flex items-center gap-2 font-medium text-slate-700 cursor-pointer">
-                        <input
-                          id={`new-lead-transport-checkbox-${t}`}
-                          type="checkbox"
-                          checked={newPreferredTransport.includes(t)}
-                          onChange={() => toggleTransport(t)}
-                          className="w-4 h-4 text-blue-600 border-blue-300 rounded focus:ring-blue-500"
-                        />
-                        <span className="capitalize">{t}</span>
-                      </label>
-                    ))}
-                  </div>
+                {/* Estimated Shipments */}
+                <div className="space-y-1">
+                  <label className="block text-slate-600 font-bold">ยอดพัสดุคาดการณ์ (ชิ้น/เดือน)</label>
+                  <input 
+                    id="new-lead-shipments"
+                    type="number" 
+                    placeholder="เช่น 100" 
+                    value={newShipmentsPerDay}
+                    onChange={(e) => setNewShipmentsPerDay(Number(e.target.value))}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white font-mono"
+                  />
                 </div>
               </div>
 
-              {/* Tags Selector */}
-              <div className="space-y-1">
-                <label className="block text-slate-600 font-bold">ประเภทธุรกิจ / คุณสมบัติลูกค้า (Tags)</label>
-                <div className="flex flex-wrap gap-2 pt-1">
-                  {ALL_TAGS.map((tag) => (
-                    <button
-                      key={tag}
-                      id={`new-lead-tag-btn-${tag}`}
-                      type="button"
-                      onClick={() => toggleTag(tag)}
-                      className={`px-3 py-1.5 rounded-full text-[10px] font-semibold border transition-all cursor-pointer ${newTags.includes(tag) ? "bg-blue-600 text-white border-blue-600 shadow-xs" : "bg-white text-slate-500 border-slate-200 hover:bg-slate-50"}`}
-                    >
-                      {tag}
-                    </button>
+              {/* Tags Selector with 3 Categories & Compact Pills */}
+              <div className="space-y-2.5 pt-2 border-t border-slate-100">
+                <div className="flex items-center justify-between">
+                  <label className="block text-slate-600 font-bold">ป้ายกำกับลูกค้า (Tags)</label>
+                  <span className="text-[11px] text-slate-400 font-medium">
+                    {newTags.length > 0 ? `เลือกแล้ว ${newTags.length} ป้าย` : "เลือกป้ายกำกับ (หรือไม่ระบุก็ได้)"}
+                  </span>
+                </div>
+
+                <div className="space-y-2.5 max-h-48 overflow-y-auto pr-1">
+                  {PRESET_TAG_CATEGORIES.map(category => (
+                    <div key={category.name} className="space-y-1 bg-slate-50/70 p-2.5 rounded-xl border border-slate-100">
+                      <div className="flex items-center gap-1.5 text-slate-600 font-bold text-[11px]">
+                        <span className="w-2 h-2 rounded-full" style={{
+                          backgroundColor: category.colorName === "blue" ? "#3b82f6" :
+                            category.colorName === "purple" ? "#a855f7" :
+                            category.colorName === "green" ? "#10b981" :
+                            category.colorName === "orange" ? "#f59e0b" : "#ef4444"
+                        }} />
+                        <span>{category.name}</span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 pt-0.5">
+                        {category.tags.map(tag => {
+                          const isSelected = newTags.includes(tag);
+                          return (
+                            <TagPill
+                              key={tag}
+                              tag={tag}
+                              size="sm"
+                              isSelected={isSelected}
+                              onClick={() => toggleNewTag(tag)}
+                            />
+                          );
+                        })}
+                      </div>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -986,7 +1075,7 @@ export default function LeadsView({
                   placeholder="เช่น รายละเอียดการโทรคุยรอบแรก ลูกค้าต้องการข้อมูลเรทราคาเพิ่ม หรือชอบคุยเวลาไหน..."
                   value={initialNote}
                   onChange={(e) => setInitialNote(e.target.value)}
-                  className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-800"
+                  className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-800"
                 />
               </div>
 
@@ -996,14 +1085,14 @@ export default function LeadsView({
                   id="cancel-add-lead-btn"
                   type="button" 
                   onClick={() => setIsAddOpen(false)} 
-                  className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 rounded-lg font-bold transition-all cursor-pointer text-xs"
+                  className="px-4 py-2 border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 rounded-xl font-bold transition-all cursor-pointer text-xs"
                 >
                   ยกเลิก
                 </button>
                 <button 
                   id="submit-add-lead-btn"
                   type="submit" 
-                  className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold transition-all cursor-pointer shadow-xs text-xs"
+                  className="px-5 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold transition-all cursor-pointer shadow-xs text-xs"
                 >
                   บันทึกและรัน Pipeline
                 </button>
@@ -1025,6 +1114,27 @@ export default function LeadsView({
           leads={leads}
         />
       )}
+
+      {/* Import Leads Excel Modal */}
+      {onBatchAddLeads && (
+        <ImportLeadsModal
+          isOpen={showImportModal}
+          onClose={() => setShowImportModal(false)}
+          currentUser={currentUser}
+          salespersons={salespersons}
+          campaigns={campaigns}
+          onBatchAddLeads={onBatchAddLeads}
+        />
+      )}
+
+      {/* Pipeline Status Reason Modal (Won / Rejection reason capture) */}
+      <StatusReasonModal
+        isOpen={statusReasonModal.isOpen}
+        lead={statusReasonModal.lead}
+        targetStatus={statusReasonModal.targetStatus}
+        onClose={() => setStatusReasonModal({ isOpen: false, lead: null, targetStatus: null })}
+        onConfirm={handleConfirmStatusReason}
+      />
     </div>
   );
 }
