@@ -255,6 +255,7 @@ export function exportLeadsToExcel(leads: Lead[], customFilename?: string): bool
         "ที่อยู่": lead.address || "-",
         "ช่องทางที่ได้ Lead": lead.channel || "-",
         "แคมเปญการตลาด": lead.campaign || "-",
+        "ผู้แนะนำ (Affiliate ID)": lead.affiliateId || "-",
         "สถานะ (Pipeline Status)": StatusLabels[lead.status] || lead.status,
         "สาเหตุที่ปิดการขาย": lead.wonReason ? `${lead.wonReason}${lead.wonReasonOther ? ` (${lead.wonReasonOther})` : ""}` : "-",
         "สาเหตุที่ปฏิเสธ": lead.lostReason ? `${lead.lostReason}${lead.lostReasonOther ? ` (${lead.lostReasonOther})` : ""}` : "-",

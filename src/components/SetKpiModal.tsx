@@ -22,7 +22,12 @@ export default function SetKpiModal({
   kpiTargets,
   onSaveKpiTargets
 }: SetKpiModalProps) {
-  const [selectedSp, setSelectedSp] = useState<string>(salespersons[0] || "Phere");
+  const eligibleSalespersons = React.useMemo(() => {
+    const list = salespersons.filter(sp => sp.toLowerCase() !== "jack");
+    return list.length > 0 ? list : ["Phere", "Nalin", "Beer"];
+  }, [salespersons]);
+
+  const [selectedSp, setSelectedSp] = useState<string>(eligibleSalespersons[0] || "Phere");
   const [formData, setFormData] = useState<Record<string, SalespersonKpiTarget>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -31,7 +36,7 @@ export default function SetKpiModal({
   useEffect(() => {
     if (isOpen) {
       const initial: Record<string, SalespersonKpiTarget> = {};
-      salespersons.forEach(sp => {
+      eligibleSalespersons.forEach(sp => {
         const existing = kpiTargets[sp] || DEFAULT_KPI_TARGETS[sp] || {
           salesperson: sp,
           targetWonDeals: 10,
@@ -42,12 +47,12 @@ export default function SetKpiModal({
         initial[sp] = { ...existing };
       });
       setFormData(initial);
-      if (!selectedSp || !salespersons.includes(selectedSp)) {
-        setSelectedSp(salespersons[0] || "Phere");
+      if (!selectedSp || !eligibleSalespersons.includes(selectedSp)) {
+        setSelectedSp(eligibleSalespersons[0] || "Phere");
       }
       setSavedSuccess(false);
     }
-  }, [isOpen, salespersons, kpiTargets]);
+  }, [isOpen, eligibleSalespersons, kpiTargets]);
 
   if (!isOpen) return null;
 
@@ -105,7 +110,7 @@ export default function SetKpiModal({
     const current = formData[selectedSp];
     if (!current) return;
     const updated: Record<string, SalespersonKpiTarget> = {};
-    salespersons.forEach(sp => {
+    eligibleSalespersons.forEach(sp => {
       updated[sp] = {
         ...current,
         salesperson: sp
@@ -179,7 +184,7 @@ export default function SetKpiModal({
               เลือกเซลส์ที่ต้องการตั้งเป้าหมาย (Select Salesperson)
             </label>
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-              {salespersons.map(sp => {
+              {eligibleSalespersons.map(sp => {
                 const isSelected = selectedSp === sp;
                 const spTarget = formData[sp];
                 return (

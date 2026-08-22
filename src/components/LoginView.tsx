@@ -36,12 +36,12 @@ export default function LoginView({ salespersons, userPasswords = {}, onLogin, o
       return;
     }
 
-    // Try to match existing salesperson case-insensitively
+    // Try to match existing salesperson case-insensitively, or known superadmin accounts
     const matchedSp = salespersons.find(
       (s) => s.toLowerCase() === trimmedUser.toLowerCase()
-    ) || trimmedUser;
+    ) || (trimmedUser.toLowerCase() === "jack" ? "Jack" : trimmedUser.toLowerCase() === "phere" ? "Phere" : trimmedUser);
 
-    const expectedPass = userPasswords[matchedSp] || userPasswords[trimmedUser] || "1234";
+    const expectedPass = userPasswords[matchedSp] || userPasswords[trimmedUser] || userPasswords[matchedSp.toLowerCase()] || "1234";
 
     if (pin.trim() !== expectedPass) {
       setError("รหัสผ่านไม่ถูกต้อง (หากเพิ่งเริ่มใช้งานใช้รหัสผ่าน 1234 หรือรหัสผ่านที่คุณเคยตั้งไว้)");
@@ -64,9 +64,9 @@ export default function LoginView({ salespersons, userPasswords = {}, onLogin, o
 
     const matchedSp = salespersons.find(
       (s) => s.toLowerCase() === trimmedResetUser.toLowerCase()
-    ) || trimmedResetUser;
+    ) || (trimmedResetUser.toLowerCase() === "jack" ? "Jack" : trimmedResetUser.toLowerCase() === "phere" ? "Phere" : trimmedResetUser);
 
-    const expectedCurrentPass = userPasswords[matchedSp] || userPasswords[trimmedResetUser] || "1234";
+    const expectedCurrentPass = userPasswords[matchedSp] || userPasswords[trimmedResetUser] || userPasswords[matchedSp.toLowerCase()] || "1234";
     if (currentPass.trim() !== expectedCurrentPass) {
       setError("รหัสผ่านปัจจุบันไม่ถูกต้อง (รหัสเริ่มต้นคือ 1234)");
       return;
@@ -180,7 +180,7 @@ export default function LoginView({ salespersons, userPasswords = {}, onLogin, o
                   id="username-input"
                   type="text"
                   required
-                  placeholder="ระบุชื่อผู้ใช้งาน (เช่น Nalin, Phere, Bow)"
+                  placeholder="ระบุชื่อผู้ใช้งาน (เช่น Jack, Phere, Nalin, Beer)"
                   value={usernameInput}
                   onChange={(e) => {
                     setUsernameInput(e.target.value);
@@ -298,7 +298,7 @@ export default function LoginView({ salespersons, userPasswords = {}, onLogin, o
               <input
                 type="text"
                 required
-                placeholder="ระบุชื่อผู้ใช้งาน (เช่น Nalin, Phere)"
+                placeholder="ระบุชื่อผู้ใช้งาน (เช่น Jack, Phere, Nalin)"
                 value={resetUsername}
                 onChange={(e) => {
                   setResetUsername(e.target.value);

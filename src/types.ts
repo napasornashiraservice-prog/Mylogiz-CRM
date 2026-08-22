@@ -240,7 +240,7 @@ export interface Documents {
   idCard: boolean;       // บัตรประชาชน
   bookBank: boolean;     // Book Bank
   companyReg: boolean;   // หนังสือรับรอง
-  taxDoc: boolean;       // ภาษี
+  taxDoc?: boolean;      // ภาษี (ภพ.20 - deprecated / optional)
   storefrontPhoto: boolean; // รูปถ่ายหน้าร้าน
 }
 
@@ -290,6 +290,7 @@ export interface Lead {
   updatedAt: string;           // อัปเดตล่าสุด
   customerType?: "individual" | "corporate"; // ประเภทลูกค้า: บุคคลธรรมดา หรือ นิติบุคคล
   campaign?: string;           // แคมเปญการตลาดที่ลูกค้าเข้ามา
+  affiliateId?: string;        // รหัสผู้แนะนำ Affiliate ID (เช่น AFF0001)
   
   // ฟิลด์พิเศษเมื่อสมัคร/เปิดใช้งานแล้ว (Registered/Activated)
   customerCode?: string;       // รหัสลูกค้า
@@ -556,4 +557,21 @@ export const THAI_PROVINCES = [
 export const TRANSPORT_CARRIERS = [
   "flash", "dhl", "spx", "kex", "best express", "ไปรษณีย์", "ขนส่งต่างประเทศ", "ทั้งหมด"
 ];
+
+// ==========================================
+// Affiliate Member & Referral Tracking Models
+// ==========================================
+export interface Affiliate {
+  id: string;              // Primary key (Firestore Doc ID)
+  affiliateId: string;     // Unique Affiliate ID e.g. "AFF0001"
+  name: string;            // ชื่อ Affiliate / ผู้แนะนำ
+  phone: string;           // เบอร์โทรศัพท์
+  lineId?: string;         // LINE ID
+  contactChannel?: string; // ช่องทางติดต่อ / บันทึกช่องทาง
+  status: "active" | "inactive"; // สถานะ: Active / Inactive
+  createdAt: string;       // วันที่เพิ่ม (ISO string)
+  updatedAt?: string;      // วันที่อัปเดตล่าสุด
+  notes?: string;          // บันทึกเพิ่มเติม
+}
+
 

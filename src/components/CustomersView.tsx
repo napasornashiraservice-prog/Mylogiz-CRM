@@ -1,20 +1,21 @@
 import React, { useState } from "react";
-import { Lead, LeadStatus, StatusLabels, StatusColors } from "../types";
+import { Lead, LeadStatus, StatusLabels, StatusColors, Affiliate } from "../types";
 import { generateNextCustomerCode } from "../utils/codeGenerator";
 import { 
   Users, UserCheck, CheckCircle2, ShieldCheck, Search, HelpCircle, 
   MapPin, Clipboard, Calendar, Tag, CreditCard, ChevronRight, Play, Award,
-  Edit2, Check, X
+  Edit2, Check, X, Megaphone
 } from "lucide-react";
 import { motion } from "motion/react";
 
 interface CustomersViewProps {
   leads: Lead[];
+  affiliates?: Affiliate[];
   onSelectLead: (lead: Lead) => void;
   onUpdateLead: (lead: Lead) => void;
 }
 
-export default function CustomersView({ leads, onSelectLead, onUpdateLead }: CustomersViewProps) {
+export default function CustomersView({ leads, affiliates = [], onSelectLead, onUpdateLead }: CustomersViewProps) {
   const [searchQuery, setSearchQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState<"all" | LeadStatus.REGISTERED | LeadStatus.ACTIVATED | LeadStatus.REGULAR>("all");
   const [editingRateId, setEditingRateId] = useState<string | null>(null);
@@ -48,12 +49,14 @@ export default function CustomersView({ leads, onSelectLead, onUpdateLead }: Cus
   );
 
   const filteredCustomers = customers.filter(c => {
-    const matchesSearch = 
-      c.shopName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.contactName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.phone.includes(searchQuery) ||
-      (c.customerCode && c.customerCode.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      c.province.toLowerCase().includes(searchQuery.toLowerCase());
+    const query = searchQuery.trim().toLowerCase();
+    const matchesSearch = !query ||
+      c.shopName.toLowerCase().includes(query) ||
+      c.contactName.toLowerCase().includes(query) ||
+      c.phone.includes(query) ||
+      (c.customerCode && c.customerCode.toLowerCase().includes(query)) ||
+      c.province.toLowerCase().includes(query) ||
+      (c.affiliateId && c.affiliateId.toLowerCase().includes(query));
 
     const matchesStatus = statusFilter === "all" || c.status === statusFilter;
 
@@ -211,7 +214,17 @@ export default function CustomersView({ leads, onSelectLead, onUpdateLead }: Cus
                     {/* Shop details */}
                     <td className="p-4">
                       <div className="space-y-0.5">
-                        <span className="font-bold text-slate-900 block">{cust.shopName}</span>
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          <span className="font-bold text-slate-900">{cust.shopName}</span>
+                          {cust.affiliateId && (
+                            <span 
+                              className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 border border-purple-200 font-mono"
+                              title={`ผู้แนะนำ: ${cust.affiliateId}`}
+                            >
+                              🤝 {cust.affiliateId}
+                            </span>
+                          )}
+                        </div>
                         <div className="flex items-center gap-1 text-[10px] text-slate-400">
                           <MapPin className="w-3 h-3 text-slate-400" /> {cust.province}
                         </div>

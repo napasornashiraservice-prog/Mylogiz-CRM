@@ -17,7 +17,7 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
     const docs = l.documents || { idCard: false, bookBank: false, companyReg: false, taxDoc: false, storefrontPhoto: false };
     const isCorporate = l.customerType === "corporate";
     const hasAll = isCorporate 
-      ? (docs.idCard && docs.companyReg && docs.taxDoc && docs.storefrontPhoto)
+      ? (docs.idCard && docs.companyReg && docs.storefrontPhoto)
       : (docs.idCard && docs.storefrontPhoto);
     
     const matchesSearch = 
@@ -34,6 +34,7 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
   });
 
   const handleToggleDoc = (lead: Lead, key: keyof Documents, e: React.MouseEvent) => {
+    e.preventDefault();
     e.stopPropagation();
     const currentDocs = lead.documents || { idCard: false, bookBank: false, companyReg: false, taxDoc: false, storefrontPhoto: false };
     const updatedDocs = {
@@ -52,7 +53,6 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
     const missing: string[] = [];
     if (!docs.idCard) missing.push("บัตรประชาชน");
     if (isCorporate && !docs.companyReg) missing.push("หนังสือรับรอง");
-    if (isCorporate && !docs.taxDoc) missing.push("ภาษี");
     if (!docs.storefrontPhoto) missing.push("รูปหน้าร้าน");
     
     if (missing.length === 0) {
@@ -77,9 +77,8 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
       let count = 0;
       if (docs.idCard) count++;
       if (docs.companyReg) count++;
-      if (docs.taxDoc) count++;
       if (docs.storefrontPhoto) count++;
-      return Math.round((count / 4) * 100);
+      return Math.round((count / 3) * 100);
     } else {
       let count = 0;
       if (docs.idCard) count++;
@@ -93,7 +92,7 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
       {/* Header */}
       <div>
         <h2 className="text-xl font-bold text-gray-800">ศูนย์ควบคุมเอกสารการสมัครสมาชิก (Documents Portal)</h2>
-        <p className="text-xs text-gray-500 mt-0.5">คัดกรอง และบันทึกสถานะเอกสารประกอบความปลอดภัย COD (บัตรประชาชน, บัญชีธนาคาร, หนังสือรับรองบริษัท, ทะเบียนภาษี)</p>
+        <p className="text-xs text-gray-500 mt-0.5">คัดกรอง และบันทึกสถานะเอกสารประกอบความปลอดภัย COD (บัตรประชาชน, บัญชีธนาคาร, หนังสือรับรองบริษัท, รูปถ่ายหน้าร้าน)</p>
       </div>
 
       {/* Control bar */}
@@ -117,7 +116,7 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
                 const d = l.documents || { idCard: false, bookBank: false, companyReg: false, taxDoc: false, storefrontPhoto: false };
                 const isCorp = l.customerType === "corporate";
                 const hasAll = isCorp 
-                  ? (d.idCard && d.companyReg && d.taxDoc && d.storefrontPhoto)
+                  ? (d.idCard && d.companyReg && d.storefrontPhoto)
                   : (d.idCard && d.storefrontPhoto);
                 return !hasAll;
               }).length})
@@ -131,7 +130,7 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
                 const d = l.documents || { idCard: false, bookBank: false, companyReg: false, taxDoc: false, storefrontPhoto: false };
                 const isCorp = l.customerType === "corporate";
                 const hasAll = isCorp 
-                  ? (d.idCard && d.companyReg && d.taxDoc && d.storefrontPhoto)
+                  ? (d.idCard && d.companyReg && d.storefrontPhoto)
                   : (d.idCard && d.storefrontPhoto);
                 return hasAll;
               }).length})
@@ -163,7 +162,6 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
                 <th className="p-4 text-center">บัตรประชาชน</th>
                 <th className="p-4 text-center">Book Bank (ไม่บังคับ)</th>
                 <th className="p-4 text-center">หนังสือรับรอง</th>
-                <th className="p-4 text-center">ภาษี (ภพ.20)</th>
                 <th className="p-4 text-center">รูปถ่ายหน้าร้าน</th>
                 <th className="p-4">สถานะสรุป</th>
                 <th className="p-4 text-center">เปิดดู</th>
@@ -178,8 +176,7 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
                   <tr
                     key={lead.id}
                     id={`doc-row-${lead.id}`}
-                    onClick={() => onSelectLead(lead)}
-                    className="hover:bg-slate-50/50 cursor-pointer transition-all"
+                    className="hover:bg-slate-50/70 transition-colors"
                   >
                     <td className="p-4 pl-5">
                       <div className="space-y-1">
@@ -190,6 +187,7 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
                             id={`toggle-type-btn-${lead.id}`}
                             type="button"
                             onClick={(e) => {
+                              e.preventDefault();
                               e.stopPropagation();
                               const newType = lead.customerType === "corporate" ? "individual" : "corporate";
                               onUpdateLead({
@@ -222,18 +220,17 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
 
                     {/* Interactive document cells */}
                     {[
-                      { key: "idCard", idPrefix: "idcard" },
-                      { key: "bookBank", idPrefix: "bookbank" },
-                      { key: "companyReg", idPrefix: "companyreg" },
-                      { key: "taxDoc", idPrefix: "taxdoc" },
-                      { key: "storefrontPhoto", idPrefix: "storefront" }
+                      { key: "idCard", idPrefix: "idcard", label: "บัตรประชาชน" },
+                      { key: "bookBank", idPrefix: "bookbank", label: "Book Bank" },
+                      { key: "companyReg", idPrefix: "companyreg", label: "หนังสือรับรอง" },
+                      { key: "storefrontPhoto", idPrefix: "storefront", label: "รูปถ่ายหน้าร้าน" }
                     ].map(cell => {
-                      const isCorpOnly = ["companyReg", "taxDoc"].includes(cell.key);
+                      const isCorpOnly = cell.key === "companyReg";
                       const isRequired = !isCorpOnly || lead.customerType === "corporate";
 
                       if (!isRequired) {
                         return (
-                          <td key={cell.key} className="p-4 text-center bg-slate-50/50" onClick={(e) => e.stopPropagation()}>
+                          <td key={cell.key} className="p-4 text-center bg-slate-50/50">
                             <span className="text-[10px] text-slate-400 font-medium bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">ไม่ต้องใช้</span>
                           </td>
                         );
@@ -241,12 +238,13 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
 
                       const val = docsObj[cell.key as keyof Documents];
                       return (
-                        <td key={cell.key} className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
+                        <td key={cell.key} className="p-4 text-center">
                           <button
                             id={`doc-cell-btn-${cell.idPrefix}-${lead.id}`}
                             type="button"
+                            title={`คลิกเพื่อ${val ? "ยกเลิก" : "บันทึก"}เอกสาร ${cell.label}`}
                             onClick={(e) => handleToggleDoc(lead, cell.key as keyof Documents, e)}
-                            className={`w-6 h-6 rounded-full border flex items-center justify-center mx-auto transition-all cursor-pointer ${val ? "bg-indigo-600 border-indigo-600 text-white" : "border-slate-200 hover:border-indigo-300 hover:bg-indigo-50 bg-white text-slate-300"}`}
+                            className={`w-6 h-6 rounded-full border flex items-center justify-center mx-auto transition-all cursor-pointer ${val ? "bg-indigo-600 border-indigo-600 text-white shadow-2xs" : "border-slate-300 hover:border-indigo-400 hover:bg-indigo-50 bg-white text-slate-300"}`}
                           >
                             <ShieldCheck className="w-4 h-4" />
                           </button>
@@ -257,13 +255,20 @@ export default function DocumentsView({ leads, onSelectLead, onUpdateLead }: Doc
                     <td className="p-4">
                       {getMissingText(lead)}
                     </td>
-                    <td className="p-4 text-center" onClick={(e) => e.stopPropagation()}>
+                    <td className="p-4 text-center">
                       <button
                         id={`doc-details-link-${lead.id}`}
-                        onClick={() => onSelectLead(lead)}
-                        className="p-1.5 border border-slate-200 hover:border-blue-200 bg-white hover:bg-blue-50 text-blue-600 rounded-lg cursor-pointer"
+                        type="button"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          onSelectLead(lead);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1.5 border border-slate-200 hover:border-blue-300 bg-white hover:bg-blue-50 text-blue-600 font-medium rounded-lg text-xs cursor-pointer transition-all shadow-2xs"
+                        title="เปิดดูรายละเอียดข้อมูลลูกค้า (Lead Details)"
                       >
-                        <ExternalLink className="w-4 h-4" />
+                        <ExternalLink className="w-3.5 h-3.5" />
+                        <span>เปิดดู</span>
                       </button>
                     </td>
                   </tr>

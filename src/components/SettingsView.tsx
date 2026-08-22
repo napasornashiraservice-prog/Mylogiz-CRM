@@ -47,7 +47,9 @@ export default function SettingsView({
   onRenameSalesperson
 }: SettingsViewProps) {
   const managerName = salespersons[0] || "Phere";
-  const isSuperAdmin = currentUser?.toLowerCase() === "phere" || currentUser?.toLowerCase() === "jack" || currentUser === managerName;
+  const isJackSuperAdmin = currentUser?.toLowerCase() === "jack";
+  const isPhereManager = currentUser?.toLowerCase() === "phere" || currentUser === managerName;
+  const isSuperAdmin = isJackSuperAdmin || isPhereManager;
 
   // Excel Export Filters State
   const [exportStatus, setExportStatus] = useState<string>("all");
@@ -1008,8 +1010,12 @@ export default function SettingsView({
                 <p className="text-[10px] text-slate-400">แก้ไขหรืออัปเดตชื่อผู้ใช้งานของคุณ ระบบจะเชื่อมโยงรายชื่อผู้รับผิดชอบดีลและโน้ตให้อัตโนมัติ</p>
               </div>
             </div>
-            <div className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${currentUser === managerName ? "bg-amber-100 text-amber-800 border border-amber-200" : "bg-blue-50 text-blue-700 border border-blue-100"}`}>
-              {currentUser === managerName ? "👑 สิทธิ์ผู้จัดการ (Manager)" : "เซลส์พนักงานขาย (Sales)"}
+            <div className={`px-2.5 py-1 rounded-full text-[10px] font-bold ${isJackSuperAdmin ? "bg-amber-100 text-amber-800 border border-amber-200" : isPhereManager ? "bg-blue-100 text-blue-800 border border-blue-200" : "bg-slate-100 text-slate-700 border border-slate-200"}`}>
+              {isJackSuperAdmin
+                ? "👑 Super Admin (ผู้ดูแลระบบสูงสุด)"
+                : isPhereManager
+                ? "👑 ผู้จัดการ (Manager)"
+                : "เซลส์พนักงานขาย (Sales)"}
             </div>
           </div>
 
@@ -1141,9 +1147,9 @@ export default function SettingsView({
                 <p className="text-[10px] text-slate-400">เพิ่ม ลบ รายชื่อพนักงานขายในระบบเพื่อใช้กำหนดสิทธิ์ดูแลใน Pipeline</p>
               </div>
             </div>
-            {currentUser !== managerName && (
+            {!isSuperAdmin && (
               <span className="px-2.5 py-1 bg-red-50 text-red-700 border border-red-100 rounded-full text-[10px] font-bold">
-                🔒 สิทธิ์จำกัดเฉพาะ Manager
+                🔒 สิทธิ์จำกัดเฉพาะ Manager & SuperAdmin
               </span>
             )}
           </div>
@@ -1154,7 +1160,7 @@ export default function SettingsView({
             </div>
           )}
 
-          {currentUser === managerName ? (
+          {isSuperAdmin ? (
             <form onSubmit={handleAddSalesperson} className="flex gap-2.5">
               <input 
                 id="settings-salesperson-add-input"
@@ -1176,7 +1182,7 @@ export default function SettingsView({
             </form>
           ) : (
             <div className="p-3 bg-amber-50/50 border border-amber-100 text-amber-800 rounded-xl text-xs leading-relaxed">
-              ⚠️ เฉพาะผู้จัดการสูงสุด <strong>{managerName}</strong> เท่านั้นที่มีสิทธิ์เพิ่มรายชื่อพนักงานขายในระบบได้
+              ⚠️ เฉพาะผู้จัดการและ SuperAdmin (<strong>Phere</strong>, <strong>Jack</strong>) เท่านั้นที่มีสิทธิ์เพิ่มรายชื่อพนักงานขายในระบบได้
             </div>
           )}
 
@@ -1235,7 +1241,7 @@ export default function SettingsView({
                       </div>
                     )}
 
-                    {!isEditing && currentUser === managerName && (
+                    {!isEditing && isSuperAdmin && (
                       <div className="flex items-center gap-1">
                         <button
                           type="button"

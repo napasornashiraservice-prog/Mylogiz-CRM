@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from "react";
-import { Lead, LeadStatus, StatusLabels, TimelineItem, SalesKpiStore, DEFAULT_KPI_TARGETS, Note, NotePriority } from "./types";
+import { Lead, LeadStatus, StatusLabels, TimelineItem, SalesKpiStore, DEFAULT_KPI_TARGETS, Note, NotePriority, Affiliate } from "./types";
 import { generateNextCustomerCode } from "./utils/codeGenerator";
 import DashboardView from "./components/DashboardView";
 import LeadsView from "./components/LeadsView";
 import FollowUpView from "./components/FollowUpView";
 import DocumentsView from "./components/DocumentsView";
 import CustomersView from "./components/CustomersView";
+import AffiliatesView from "./components/AffiliatesView";
 import NotesView from "./components/NotesView";
 import SettingsView from "./components/SettingsView";
 import LeadDetailsModal from "./components/LeadDetailsModal";
@@ -15,7 +16,7 @@ import {
   LayoutDashboard, Users, PhoneCall, FileText, Settings, 
   UserCheck, BarChart3, MessageSquare, LogOut, Menu, 
   RefreshCw, CloudLightning, ShieldAlert, X, ChevronRight, Sparkles,
-  Sun, Moon, Palette
+  Sun, Moon, Palette, Share2
 } from "lucide-react";
 import { motion } from "motion/react";
 import { db } from "./firebase";
@@ -38,6 +39,7 @@ function cleanFirestorePayload<T>(data: T): T {
 
 export default function App() {
   const [leads, setLeads] = useState<Lead[]>([]);
+  const [affiliates, setAffiliates] = useState<Affiliate[]>([]);
   const [salespersons, setSalespersons] = useState<string[]>([]);
   const [campaigns, setCampaigns] = useState<string[]>([]);
   const [currentUser, setCurrentUser] = useState<string | null>(() => {
@@ -326,6 +328,22 @@ export default function App() {
       }
     );
 
+    // 7. Listen to affiliates collection
+    const unsubscribeAffiliates = onSnapshot(
+      collection(db, "affiliates"),
+      (snapshot) => {
+        const list: Affiliate[] = [];
+        snapshot.forEach((docSnap) => {
+          list.push({ id: docSnap.id, ...docSnap.data() } as Affiliate);
+        });
+        list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+        setAffiliates(list);
+      },
+      (err) => {
+        console.error("Affiliates listener error:", err);
+      }
+    );
+
     return () => {
       unsubscribeLeads();
       unsubscribeSp();
@@ -333,12 +351,14 @@ export default function App() {
       unsubscribePasswords();
       unsubscribeCampaigns();
       unsubscribeKpi();
+      unsubscribeAffiliates();
     };
   }, []);
 
-  // Log out user if they are deleted from settings
+  // Log out user if they are deleted from settings (except SuperAdmin accounts like Phere and Jack)
   useEffect(() => {
-    if (currentUser && salespersons.length > 0 && !salespersons.includes(currentUser)) {
+    const isSpecialAdmin = currentUser?.toLowerCase() === "phere" || currentUser?.toLowerCase() === "jack";
+    if (currentUser && !isSpecialAdmin && salespersons.length > 0 && !salespersons.includes(currentUser)) {
       setCurrentUser(null);
       localStorage.removeItem("crm_current_user");
     }
@@ -627,7 +647,7 @@ export default function App() {
       if (firstShipmentDate !== null) finalLead.firstShipmentDate = firstShipmentDate;
 
       const cleanedFinalLead = cleanFirestorePayload(finalLead);
-      setSelectedLead(cleanedFinalLead);
+      setSelectedLead(prev => (prev && prev.id === updatedLead.id ? cleanedFinalLead : prev));
       await setDoc(doc(db, "leads", updatedLead.id), cleanedFinalLead);
     } catch (err: any) {
       console.error(err);
@@ -977,6 +997,40 @@ export default function App() {
     }
   };
 
+  const handleAddAffiliate = async (affiliateData: Omit<Affiliate, "id" | "createdAt" | "updatedAt">) => {
+    try {
+      const id = `aff_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+      const newAff: Affiliate = {
+        ...affiliateData,
+        id,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+      const cleaned = cleanFirestorePayload(newAff);
+      await setDoc(doc(db, "affiliates", id), cleaned);
+      return true;
+    } catch (err) {
+      console.error("Failed to add affiliate:", err);
+      setErrorMsg("ไม่สามารถเพิ่มข้อมูล Affiliate ในระบบคลาวด์ได้");
+      return false;
+    }
+  };
+
+  const handleUpdateAffiliate = async (updated: Affiliate) => {
+    try {
+      const cleaned = cleanFirestorePayload({
+        ...updated,
+        updatedAt: new Date().toISOString()
+      });
+      await setDoc(doc(db, "affiliates", updated.id), cleaned);
+      return true;
+    } catch (err) {
+      console.error("Failed to update affiliate:", err);
+      setErrorMsg("ไม่สามารถอัปเดตข้อมูล Affiliate ได้");
+      return false;
+    }
+  };
+
   const handleUpdateSheetsConfig = async (sheetUrl: string, sheetName: string, isEnabled: boolean, webAppUrl?: string) => {
     try {
       const updatedConfig = {
@@ -1001,6 +1055,7 @@ export default function App() {
     { id: "followup", label: "Follow-up", icon: PhoneCall },
     { id: "documents", label: "คลังเอกสาร COD", icon: FileText },
     { id: "customers", label: "ฐานลูกค้าสมาชิก", icon: UserCheck },
+    { id: "affiliates", label: "ระบบ Affiliate / แนะนำ", icon: Share2 },
     { id: "notes", label: "โน้ตช่วยจำแชร์", icon: MessageSquare },
     { id: "settings", label: "ตั้งค่าระบบ & Sheets", icon: Settings },
   ];
@@ -1012,7 +1067,12 @@ export default function App() {
 
   // Render view controller with dynamic user permissions and filtering
   const managerName = salespersons[0] || "Phere";
-  const isManager = currentUser === "Phere" || currentUser === managerName;
+  const isJackSuperAdmin = currentUser?.toLowerCase() === "jack";
+  const isPhereManager = currentUser?.toLowerCase() === "phere" || currentUser === managerName;
+  const isSuperAdmin = isJackSuperAdmin;
+  const isManager = isJackSuperAdmin || isPhereManager;
+  const userRoleTitle = isJackSuperAdmin ? "Super Admin" : isPhereManager ? "Manager" : "Sales Executive";
+  const userRoleSubtitle = isJackSuperAdmin ? "ผู้ดูแลระบบสูงสุด" : isPhereManager ? "ผู้จัดการ" : "Sales Executive";
 
   const displayedLeads = (() => {
     if (!currentUser) return [];
@@ -1050,6 +1110,7 @@ export default function App() {
             leads={displayedLeads} 
             salespersons={salespersons}
             campaigns={campaigns}
+            affiliates={affiliates}
             onAddCampaign={handleAddCampaign}
             onDeleteCampaign={handleDeleteCampaign}
             currentUser={currentUser}
@@ -1075,7 +1136,25 @@ export default function App() {
       case "documents":
         return <DocumentsView leads={displayedLeads} onSelectLead={setSelectedLead} onUpdateLead={handleUpdateLead} />;
       case "customers":
-        return <CustomersView leads={displayedLeads} onSelectLead={setSelectedLead} onUpdateLead={handleUpdateLead} />;
+        return (
+          <CustomersView 
+            leads={displayedLeads} 
+            affiliates={affiliates}
+            onSelectLead={setSelectedLead} 
+            onUpdateLead={handleUpdateLead} 
+          />
+        );
+      case "affiliates":
+        return (
+          <AffiliatesView 
+            affiliates={affiliates}
+            leads={leads}
+            currentUser={currentUser}
+            onAddAffiliate={handleAddAffiliate}
+            onUpdateAffiliate={handleUpdateAffiliate}
+            onSelectLead={setSelectedLead}
+          />
+        );
       case "notes":
         return (
           <NotesView 
@@ -1173,11 +1252,13 @@ export default function App() {
           <div className="bg-slate-50 rounded-xl p-3 flex items-center justify-between gap-2">
             <div className="flex items-center gap-2.5 min-w-0">
               <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center font-bold text-blue-600 text-xs shrink-0">
-                {currentUser ? currentUser.substring(currentUser.length - 2) : "เซลส์"}
+                {currentUser ? (currentUser.length <= 2 ? currentUser.toUpperCase() : currentUser.substring(0, 2).toUpperCase()) : "US"}
               </div>
               <div className="text-left min-w-0 flex-1">
                 <span className="text-xs font-bold text-slate-700 block truncate" title={currentUser || ""}>{currentUser}</span>
-                <span className="text-[10px] text-slate-400 block font-medium leading-none truncate">Sales Executive</span>
+                <span className={`text-[10px] block font-bold leading-none truncate ${isJackSuperAdmin ? "text-amber-600" : isPhereManager ? "text-blue-600" : "text-slate-400"}`}>
+                  {isJackSuperAdmin ? "👑 Super Admin" : isPhereManager ? "👑 Manager" : "Sales Executive"}
+                </span>
               </div>
             </div>
             <button
@@ -1341,10 +1422,25 @@ export default function App() {
             <div className="flex items-center gap-3 pl-3 border-l border-slate-200">
               <div className="flex items-center gap-2">
                 <div className="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center font-bold text-blue-700 text-[11px] shadow-2xs">
-                  {currentUser ? currentUser.substring(currentUser.length - 2) : "เซลส์"}
+                  {currentUser ? (currentUser.length <= 2 ? currentUser.toUpperCase() : currentUser.substring(0, 2).toUpperCase()) : "US"}
                 </div>
                 <div className="text-left hidden md:block">
-                  <span className="text-[11px] font-bold text-slate-800 block leading-none">{currentUser}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] font-bold text-slate-800 block leading-none">{currentUser}</span>
+                    {isJackSuperAdmin && (
+                      <span className="px-1.5 py-0.2 bg-amber-50 text-amber-800 border border-amber-200 rounded text-[9px] font-bold">
+                        Super Admin
+                      </span>
+                    )}
+                    {isPhereManager && !isJackSuperAdmin && (
+                      <span className="px-1.5 py-0.2 bg-blue-50 text-blue-800 border border-blue-200 rounded text-[9px] font-bold">
+                        Manager
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-[9px] text-slate-400 font-medium block mt-0.5">
+                    {userRoleSubtitle}
+                  </span>
                 </div>
               </div>
               <button
@@ -1422,6 +1518,7 @@ export default function App() {
           lead={selectedLead} 
           salespersons={salespersons}
           campaigns={campaigns}
+          affiliates={affiliates}
           onAddCampaign={handleAddCampaign}
           onDeleteCampaign={handleDeleteCampaign}
           currentUser={currentUser}

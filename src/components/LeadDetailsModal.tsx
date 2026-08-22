@@ -13,7 +13,8 @@ import {
   NOTE_CATEGORIES,
   NoteCategory,
   NotePriority,
-  FollowUpPriority
+  FollowUpPriority,
+  Affiliate
 } from "../types";
 import { 
   X, Calendar, Clock, Star, Phone, MapPin, Tag, Briefcase, 
@@ -35,6 +36,7 @@ interface LeadDetailsModalProps {
   lead: Lead;
   salespersons?: string[];
   campaigns?: string[];
+  affiliates?: Affiliate[];
   onAddCampaign?: (name: string) => Promise<void>;
   onDeleteCampaign?: (name: string) => Promise<void>;
   currentUser?: string | null;
@@ -62,6 +64,7 @@ export default function LeadDetailsModal({
   lead, 
   salespersons = ["Phere", "Nalin", "Beer"], 
   campaigns = [],
+  affiliates = [],
   onAddCampaign,
   onDeleteCampaign,
   currentUser = null, 
@@ -125,6 +128,7 @@ export default function LeadDetailsModal({
   const [editProvince, setEditProvince] = useState(lead.province || "กรุงเทพมหานคร");
   const [editChannel, setEditChannel] = useState(lead.channel || "Facebook");
   const [editCampaign, setEditCampaign] = useState(lead.campaign || "");
+  const [editAffiliateId, setEditAffiliateId] = useState(lead.affiliateId || "");
   const [editAddress, setEditAddress] = useState(lead.address || "");
   const [editShipments, setEditShipments] = useState(lead.shipmentsPerDay || 0);
   const [editCompetitor, setEditCompetitor] = useState(lead.competitor || "");
@@ -164,6 +168,7 @@ export default function LeadDetailsModal({
     setEditProvince(lead.province || "กรุงเทพมหานคร");
     setEditChannel(lead.channel || "Facebook");
     setEditCampaign(lead.campaign || "");
+    setEditAffiliateId(lead.affiliateId || "");
     setEditAddress(lead.address || "");
     setEditShipments(lead.shipmentsPerDay || 0);
     setEditCompetitor(lead.competitor || "");
@@ -298,7 +303,6 @@ export default function LeadDetailsModal({
     const missing: string[] = [];
     if (!docs.idCard) missing.push("บัตรประชาชน");
     if (isCorporate && !docs.companyReg) missing.push("หนังสือรับรองบริษัท");
-    if (isCorporate && !docs.taxDoc) missing.push("ใบทะเบียนภาษี (ภพ.20)");
     if (!docs.storefrontPhoto) missing.push("รูปถ่ายหน้าร้าน");
     
     if (missing.length === 0) return "✓ เอกสารยื่นครบถ้วนสมบูรณ์";
@@ -306,7 +310,7 @@ export default function LeadDetailsModal({
   };
 
   const hasMissingDocs = isCorporate 
-    ? (!docs.idCard || !docs.companyReg || !docs.taxDoc || !docs.storefrontPhoto)
+    ? (!docs.idCard || !docs.companyReg || !docs.storefrontPhoto)
     : (!docs.idCard || !docs.storefrontPhoto);
 
   // Quick date helper
@@ -336,6 +340,7 @@ export default function LeadDetailsModal({
       score: editScore,
       salesPerson: editSalesperson,
       campaign: editCampaign ? editCampaign.trim() : "",
+      affiliateId: editAffiliateId ? editAffiliateId.trim() : "",
       preferredTransport: editTransport,
       customerType: editCustomerType,
       customerCode: editCustomerCode ? editCustomerCode.trim() : "",
@@ -985,6 +990,22 @@ export default function LeadDetailsModal({
                       </select>
                     </div>
                     <div>
+                      <label className="text-gray-500 font-semibold block mb-0.5">ผู้แนะนำ (Affiliate ID)</label>
+                      <select 
+                        id="edit-affiliate"
+                        value={editAffiliateId} 
+                        onChange={(e) => setEditAffiliateId(e.target.value)} 
+                        className="w-full bg-slate-50 border p-2 rounded"
+                      >
+                        <option value="">-- ไม่ระบุ (ไม่มีผู้แนะนำ) --</option>
+                        {affiliates.map(a => (
+                          <option key={a.id} value={a.affiliateId}>
+                            {a.affiliateId} - {a.name} {a.status === "inactive" ? "[ปิดใช้งาน]" : ""}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div>
                       <label className="text-gray-500 font-semibold block mb-0.5">ยอดส่งต่อเดือน (ชิ้น/เดือน)</label>
                       <input 
                         id="edit-shipments"
@@ -1217,6 +1238,24 @@ export default function LeadDetailsModal({
                         <Megaphone className="w-3 h-3" /> {lead.campaign || "ไม่ได้ระบุแคมเปญ"}
                       </span>
                     </div>
+                    <div>
+                      <span className="text-gray-400 block text-[10px]">ผู้แนะนำ (Affiliate ID)</span>
+                      {lead.affiliateId ? (
+                        <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded font-bold border text-[10px] bg-purple-50 border-purple-200 text-purple-700">
+                            <Megaphone className="w-3 h-3 text-purple-600" />
+                            <span className="font-mono">{lead.affiliateId}</span>
+                            {affiliates.find(a => a.affiliateId === lead.affiliateId)?.name && (
+                              <span className="font-normal text-purple-900">
+                                - {affiliates.find(a => a.affiliateId === lead.affiliateId)?.name}
+                              </span>
+                            )}
+                          </span>
+                        </div>
+                      ) : (
+                        <span className="text-gray-400 text-xs mt-1 block">ไม่ได้ระบุผู้แนะนำ</span>
+                      )}
+                    </div>
                   </div>
 
                   <div>
@@ -1333,12 +1372,11 @@ export default function LeadDetailsModal({
                 <ClipboardCheck className="w-4 h-4 text-purple-500" /> ตรวจเช็คเอกสารสมัครสมาชิก (Document Checklist)
               </h3>
               
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-xs">
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                 {[
                   { key: "idCard", label: "บัตรประชาชน", desc: "สําเนาบัตรเจ้าของร้าน" },
                   { key: "bookBank", label: "Book Bank (ไม่บังคับ)", desc: "เลือกติ๊ก/ไม่ติ๊กก็ได้" },
                   { key: "companyReg", label: "หนังสือรับรอง", desc: "นิติบุคคล (ถ้ามี)" },
-                  { key: "taxDoc", label: "ใบภาษี (ภพ.20)", desc: "ภาษีมูลค่าเพิ่ม (ถ้ามี)" },
                   { key: "storefrontPhoto", label: "รูปถ่ายหน้าร้าน", desc: "รูปถ่ายหน้าร้านค้า/ป้ายร้าน" }
                 ].map(docItem => {
                   const isChecked = docs[docItem.key as keyof Documents];
@@ -1763,7 +1801,7 @@ export default function LeadDetailsModal({
                           onChange={(e) => setNoteAuthor(e.target.value)}
                           className="bg-slate-50 border border-slate-200 rounded-lg px-2 py-1 text-[10px] text-slate-700 font-medium cursor-pointer"
                         >
-                          {(salespersons.length > 0 ? salespersons : ["Phere", "Nalin", "Beer"]).map((sp) => (
+                          {Array.from(new Set([...(currentUser ? [currentUser] : []), ...(salespersons.length > 0 ? salespersons : ["Phere", "Nalin", "Beer"])])).filter(Boolean).map((sp) => (
                             <option key={sp} value={sp}>{sp}</option>
                           ))}
                         </select>

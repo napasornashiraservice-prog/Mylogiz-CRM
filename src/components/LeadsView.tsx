@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { 
   Lead, LeadStatus, StatusLabels, StatusColors, 
-  THAI_PROVINCES, TRANSPORT_CARRIERS, PRESET_TAG_CATEGORIES, TimelineItem 
+  THAI_PROVINCES, TRANSPORT_CARRIERS, PRESET_TAG_CATEGORIES, TimelineItem,
+  Affiliate
 } from "../types";
 import { 
   Plus, Search, SlidersHorizontal, Check, Star, Filter, 
@@ -23,6 +24,7 @@ interface LeadsViewProps {
   leads: Lead[];
   salespersons?: string[];
   campaigns?: string[];
+  affiliates?: Affiliate[];
   onAddCampaign?: (name: string) => Promise<void>;
   onDeleteCampaign?: (name: string) => Promise<void>;
   currentUser?: string | null;
@@ -50,6 +52,7 @@ export default function LeadsView({
   leads, 
   salespersons = [], 
   campaigns = [],
+  affiliates = [],
   onAddCampaign,
   onDeleteCampaign,
   currentUser, 
@@ -71,6 +74,7 @@ export default function LeadsView({
   const [selectedSalesperson, setSelectedSalesperson] = useState<string>("all");
   const [selectedChannel, setSelectedChannel] = useState("all");
   const [selectedCampaign, setSelectedCampaign] = useState<string>("all");
+  const [selectedAffiliate, setSelectedAffiliate] = useState<string>("all");
   const [selectedTags, setSelectedTags] = useState<string[]>([]);
   const [tagMatchMode, setTagMatchMode] = useState<"ANY" | "ALL">("ANY");
   const [selectedFollowUpStatus, setSelectedFollowUpStatus] = useState<string>("all");
@@ -91,6 +95,7 @@ export default function LeadsView({
   const [newProvince, setNewProvince] = useState("กรุงเทพมหานคร");
   const [newChannel, setNewChannel] = useState("Facebook");
   const [newCampaign, setNewCampaign] = useState("");
+  const [newAffiliateId, setNewAffiliateId] = useState("");
   const [newTags, setNewTags] = useState<string[]>([]);
   const [newScore, setNewScore] = useState(3);
   const [newAddress, setNewAddress] = useState("");
@@ -126,11 +131,14 @@ export default function LeadsView({
       (l.lineId && l.lineId.toLowerCase().includes(query)) ||
       (l.province && l.province.toLowerCase().includes(query)) ||
       (l.customerCode && l.customerCode.toLowerCase().includes(query)) ||
-      (l.facebook && l.facebook.toLowerCase().includes(query));
+      (l.facebook && l.facebook.toLowerCase().includes(query)) ||
+      (l.affiliateId && l.affiliateId.toLowerCase().includes(query));
 
     const matchesStatus = selectedStatus === "all" || l.status === selectedStatus;
     const matchesChannel = selectedChannel === "all" || l.channel === selectedChannel;
     const matchesCampaign = selectedCampaign === "all" || l.campaign === selectedCampaign;
+    const matchesAffiliate = selectedAffiliate === "all" || 
+      (selectedAffiliate === "none" ? !l.affiliateId : l.affiliateId === selectedAffiliate);
     const matchesProvince = selectedProvince === "all" || l.province === selectedProvince;
     const matchesScore = selectedScore === "all" || l.score === selectedScore;
     const matchesSalesperson = selectedSalesperson === "all" || l.salesPerson === selectedSalesperson;
@@ -153,7 +161,7 @@ export default function LeadsView({
       matchesFollowUp = followUpInfo.status === selectedFollowUpStatus;
     }
 
-    return matchesSearch && matchesStatus && matchesChannel && matchesCampaign && matchesTags && matchesFollowUp && matchesProvince && matchesScore && matchesSalesperson;
+    return matchesSearch && matchesStatus && matchesChannel && matchesCampaign && matchesAffiliate && matchesTags && matchesFollowUp && matchesProvince && matchesScore && matchesSalesperson;
   });
 
   const hasActiveFilters = 
@@ -162,6 +170,7 @@ export default function LeadsView({
     selectedSalesperson !== "all" ||
     selectedChannel !== "all" || 
     selectedCampaign !== "all" ||
+    selectedAffiliate !== "all" ||
     selectedTags.length > 0 ||
     selectedFollowUpStatus !== "all" ||
     selectedProvince !== "all" || 
@@ -173,6 +182,7 @@ export default function LeadsView({
     setSelectedSalesperson("all");
     setSelectedChannel("all");
     setSelectedCampaign("all");
+    setSelectedAffiliate("all");
     setSelectedTags([]);
     setSelectedFollowUpStatus("all");
     setSelectedProvince("all");
@@ -280,6 +290,7 @@ export default function LeadsView({
       salesPerson: newSalesPerson,
       customerType: newCustomerType,
       campaign: newCampaign,
+      affiliateId: newAffiliateId.trim(),
       documents: { idCard: false, bookBank: false, companyReg: false, taxDoc: false, storefrontPhoto: false },
       followUp: { date: "", time: "10:00", isCompleted: false },
       notes: initialNote.trim() ? [{
@@ -300,6 +311,7 @@ export default function LeadsView({
     setNewProvince("กรุงเทพมหานคร");
     setNewChannel("Facebook");
     setNewCampaign("");
+    setNewAffiliateId("");
     setNewTags([]);
     setNewScore(3);
     setNewAddress("");
@@ -499,7 +511,7 @@ export default function LeadsView({
             id="filters-panel"
             initial={{ opacity: 0, height: 0 }} 
             animate={{ opacity: 1, height: "auto" }} 
-            className="grid grid-cols-1 sm:grid-cols-4 gap-3 pt-3 border-t border-slate-100 text-xs"
+            className="grid grid-cols-1 sm:grid-cols-5 gap-3 pt-3 border-t border-slate-100 text-xs"
           >
             <div>
               <label className="block text-slate-500 font-semibold mb-1">แคมเปญการตลาด</label>
@@ -511,6 +523,24 @@ export default function LeadsView({
               >
                 <option value="all">ทั้งหมด ทุกแคมเปญ</option>
                 {campaigns.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-slate-500 font-semibold mb-1">ผู้แนะนำ (Affiliate)</label>
+              <select 
+                id="filter-affiliate-select"
+                value={selectedAffiliate} 
+                onChange={(e) => setSelectedAffiliate(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 text-slate-700 focus:outline-none focus:ring-1 focus:ring-blue-500"
+              >
+                <option value="all">ทั้งหมด (มี/ไม่มีผู้แนะนำ)</option>
+                <option value="none">-- ไม่มีผู้แนะนำ --</option>
+                {affiliates.map(a => (
+                  <option key={a.id} value={a.affiliateId}>
+                    {a.affiliateId} - {a.name}
+                  </option>
+                ))}
               </select>
             </div>
 
@@ -608,11 +638,21 @@ export default function LeadsView({
                             </span>
                           </div>
 
-                          {lead.customerType === "corporate" && (
-                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0">
-                              🏢 นิติบุคคล
-                            </span>
-                          )}
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            {lead.customerType === "corporate" && (
+                              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200 shrink-0">
+                                🏢 นิติบุคคล
+                              </span>
+                            )}
+                            {lead.affiliateId && (
+                              <span 
+                                className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-purple-50 text-purple-700 border border-purple-200 shrink-0 font-mono" 
+                                title={`ผู้แนะนำ: ${lead.affiliateId}`}
+                              >
+                                🤝 {lead.affiliateId}
+                              </span>
+                            )}
+                          </div>
                         </div>
 
                         {/* Follow-up Alert / Scheduled Row */}
@@ -732,11 +772,19 @@ export default function LeadsView({
                     >
                       <td className="p-3.5 pl-5 font-medium text-slate-800">
                         <div className="space-y-0.5">
-                          <div className="flex items-center gap-1.5">
+                          <div className="flex items-center gap-1.5 flex-wrap">
                             <span className="font-bold text-slate-900">{lead.shopName}</span>
                             {lead.customerType === "corporate" && (
                               <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
                                 🏢 นิติบุคคล
+                              </span>
+                            )}
+                            {lead.affiliateId && (
+                              <span 
+                                className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-purple-50 text-purple-700 border border-purple-200 font-mono"
+                                title={`ผู้แนะนำ: ${lead.affiliateId}`}
+                              >
+                                🤝 {lead.affiliateId}
                               </span>
                             )}
                           </div>
@@ -978,6 +1026,24 @@ export default function LeadsView({
                     <option value="">-- ไม่ระบุแคมเปญ --</option>
                     {campaigns.map((c) => (
                       <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Affiliate */}
+                <div className="space-y-1">
+                  <label className="block text-slate-600 font-bold">ผู้แนะนำ (Affiliate ID)</label>
+                  <select 
+                    id="new-lead-affiliate"
+                    value={newAffiliateId}
+                    onChange={(e) => setNewAffiliateId(e.target.value)}
+                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
+                  >
+                    <option value="">-- ไม่ระบุ (ไม่มีผู้แนะนำ) --</option>
+                    {affiliates.map((a) => (
+                      <option key={a.id} value={a.affiliateId}>
+                        {a.affiliateId} - {a.name} {a.status === "inactive" ? "[ปิดใช้งาน]" : ""}
+                      </option>
                     ))}
                   </select>
                 </div>

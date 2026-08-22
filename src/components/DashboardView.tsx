@@ -175,7 +175,7 @@ export default function DashboardView({
     const docs = l.documents;
     const isCorp = l.customerType === "corporate";
     if (isCorp) {
-      return l.status === LeadStatus.WAITING_DOCS && (!docs.idCard || !docs.companyReg || !docs.taxDoc || !docs.storefrontPhoto);
+      return l.status === LeadStatus.WAITING_DOCS && (!docs.idCard || !docs.companyReg || !docs.storefrontPhoto);
     } else {
       return l.status === LeadStatus.WAITING_DOCS && (!docs.idCard || !docs.storefrontPhoto);
     }

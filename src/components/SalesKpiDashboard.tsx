@@ -155,11 +155,12 @@ export default function SalesKpiDashboard({
     return leads.filter(l => isLeadInPeriod(l));
   }, [leads, filterMode, selectedDay, selectedMonth, customStartDate, customEndDate]);
 
-  // Ensure all active salespersons are included
+  // Ensure all active salespersons are included (excluding SuperAdmin Jack who is not a salesperson)
   const allSalespersons = useMemo(() => {
     const fromLeads = Array.from(new Set(leads.map(l => l.salesPerson).filter(Boolean)));
     const combined = Array.from(new Set([...salespersons, ...fromLeads]));
-    return combined.length > 0 ? combined : ["Phere", "Nalin", "Beer"];
+    const filtered = combined.filter(sp => sp.toLowerCase() !== "jack");
+    return filtered.length > 0 ? filtered : ["Phere", "Nalin", "Beer"];
   }, [salespersons, leads]);
 
   // Calculate detailed performance and KPI fulfillment for each salesperson

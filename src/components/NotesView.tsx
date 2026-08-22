@@ -69,6 +69,15 @@ export default function NotesView({
   const [newNoteText, setNewNoteText] = useState("");
   const [noteAuthor, setNoteAuthor] = useState(currentUser || salespersons[0] || "Phere");
 
+  const availableAuthors = useMemo(() => {
+    return Array.from(
+      new Set([
+        ...(currentUser ? [currentUser] : []),
+        ...(salespersons.length > 0 ? salespersons : ["Phere", "Nalin", "Beer"])
+      ])
+    ).filter(Boolean) as string[];
+  }, [currentUser, salespersons]);
+
   // Searchable Lead Select state for Quick Add Note
   const [isLeadSelectOpen, setIsLeadSelectOpen] = useState(false);
   const [leadSearchText, setLeadSearchText] = useState("");
@@ -581,7 +590,7 @@ export default function NotesView({
                     onChange={(e) => setNoteAuthor(e.target.value)}
                     className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white text-slate-800 font-medium text-xs cursor-pointer"
                   >
-                    {(salespersons.length > 0 ? salespersons : ["Phere", "Nalin", "Beer"]).map((sp) => (
+                    {availableAuthors.map((sp) => (
                       <option key={sp} value={sp}>{sp}</option>
                     ))}
                   </select>
@@ -787,7 +796,7 @@ export default function NotesView({
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2 focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-700 text-xs cursor-pointer font-medium"
                 >
                   <option value="all">👤 ผู้บันทึก</option>
-                  {(salespersons.length > 0 ? salespersons : ["Phere", "Nalin", "Beer"]).map(sp => (
+                  {availableAuthors.map(sp => (
                     <option key={sp} value={sp}>{sp}</option>
                   ))}
                 </select>
