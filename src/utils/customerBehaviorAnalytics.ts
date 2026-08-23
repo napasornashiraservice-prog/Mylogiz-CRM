@@ -117,51 +117,17 @@ export function getLeadMonthlyUsageMap(lead: Lead, months: string[]): Record<str
     });
   }
 
-  const basePieces = Number(lead.shipmentsPerDay) || 0;
   const unitPrice = estimatePricePerPiece(lead);
-  const isLostStatus = lead.status === LeadStatus.LOST;
 
-  months.forEach((m, idx) => {
+  months.forEach((m) => {
     if (existingMap[m]) {
       map[m] = existingMap[m];
     } else {
-      // If no explicit record yet, construct baseline
-      let pieces = 0;
-      let revenue = 0;
-
-      // Check if lead was active or registered around that month
-      const leadCreatedMonth = (lead.createdAt || "").substring(0, 7);
-      const isAfterCreation = m >= leadCreatedMonth;
-
-      if (isLostStatus) {
-        // If lost, recent months are 0
-        if (idx === months.length - 1) {
-          pieces = 0;
-          revenue = 0;
-        } else if (idx === months.length - 2) {
-          pieces = Math.round(basePieces * 0.2);
-          revenue = pieces * unitPrice;
-        } else {
-          pieces = basePieces;
-          revenue = pieces * unitPrice;
-        }
-      } else if (lead.status === LeadStatus.REGULAR || lead.status === LeadStatus.ACTIVATED) {
-        if (isAfterCreation || idx >= months.length - 3) {
-          // Slight natural monthly variation
-          const factor = idx === months.length - 1 ? 1 : 0.85 + (idx % 3) * 0.1;
-          pieces = Math.round(basePieces * factor);
-          revenue = pieces * unitPrice;
-        }
-      } else if (lead.status === LeadStatus.REGISTERED && idx === months.length - 1) {
-        pieces = Math.round(basePieces * 0.5);
-        revenue = pieces * unitPrice;
-      }
-
       map[m] = {
         month: m,
-        pieces,
-        revenue,
-        orders: Math.round(pieces * 0.95),
+        pieces: 0,
+        revenue: 0,
+        orders: 0,
         avgPricePerPiece: unitPrice
       };
     }
@@ -171,7 +137,7 @@ export function getLeadMonthlyUsageMap(lead: Lead, months: string[]): Record<str
 }
 
 /**
- * Analyzes behavioral health and churn risk of an active customer
+ * Analyzes behavioral health and churn risk purely based on actual monthly usage records
  */
 export function analyzeCustomer(lead: Lead, months: string[]): AnalyzedCustomerUsage {
   const currentMonth = months[months.length - 1];
@@ -186,7 +152,7 @@ export function analyzeCustomer(lead: Lead, months: string[]): AnalyzedCustomerU
   const previousMonthPieces = prev.pieces || 0;
   const previousMonthRevenue = prev.revenue || 0;
 
-  // Calculate totals and averages
+  // Calculate totals and averages across analyzed months
   let totalPieces = 0;
   let totalRevenue = 0;
   let activeMonthsCount = 0;
@@ -219,39 +185,50 @@ export function analyzeCustomer(lead: Lead, months: string[]): AnalyzedCustomerU
     momRevenueGrowth = 100;
   }
 
-  // Determine Behavior Status
-  let behaviorStatus: CustomerBehaviorStatus = "active";
-  const isExplicitLost = lead.status === LeadStatus.LOST;
-  const isZeroCurrent = currentMonthPieces === 0;
-  const hadPastShipments = previousMonthPieces > 0 || totalPieces > 0 || lead.status === LeadStatus.REGULAR || lead.status === LeadStatus.ACTIVATED;
+  // Determine Customer Behavior purely from actual usage data (Independent of Lead Status)
+  let behaviorStatus: CustomerBehaviorStatus = "no_usage";
+  const hadPastUsage = (totalPieces - currentMonthPieces) > 0 || previousMonthPieces > 0;
 
-  if (isExplicitLost || (isZeroCurrent && hadPastShipments)) {
+  if (totalPieces === 0 && currentMonthPieces === 0) {
+    // 1. No usage at all in any analyzed month
+    behaviorStatus = "no_usage";
+  } else if (currentMonthPieces === 0 && hadPastUsage) {
+    // 2. Stopped shipping / Lost in current month (had previous shipments)
     behaviorStatus = "lost";
-  } else if (previousMonthPieces > 0 && currentMonthPieces <= previousMonthPieces * 0.5) {
+  } else if (previousMonthPieces > 0 && currentMonthPieces > 0 && currentMonthPieces <= previousMonthPieces * 0.5) {
+    // 3. Severe usage drop (>50% drop)
     behaviorStatus = "churn_risk";
-  } else if (previousMonthPieces > 0 && currentMonthPieces < previousMonthPieces) {
+  } else if (previousMonthPieces > 0 && currentMonthPieces > 0 && currentMonthPieces < previousMonthPieces) {
+    // 4. Moderate usage drop
     behaviorStatus = "dropping";
-  } else if (momPiecesGrowth !== null && momPiecesGrowth > 10) {
+  } else if (currentMonthPieces > 0 && ((previousMonthPieces > 0 && momPiecesGrowth !== null && momPiecesGrowth > 10) || (previousMonthPieces === 0 && currentMonthPieces > 0 && totalPieces > 0))) {
+    // 5. Growing usage (>10% MoM increase or newly active with shipments)
     behaviorStatus = "growing";
-  } else {
+  } else if (currentMonthPieces > 0 || totalPieces > 0) {
+    // 6. Active and stable shipments
     behaviorStatus = "active";
-  }
-
-  // Use override if saved on lead
-  if (lead.behaviorStatus) {
-    behaviorStatus = lead.behaviorStatus;
+  } else {
+    behaviorStatus = "no_usage";
   }
 
   // Label & color metadata
-  let statusLabel = "🟢 ใช้งานต่อเนื่อง (Active)";
+  let statusLabel = "⚪ ยังไม่มีการใช้งาน";
   let statusColor = {
-    bg: "bg-emerald-50",
-    text: "text-emerald-700",
-    border: "border-emerald-200",
-    badge: "bg-emerald-100 text-emerald-800"
+    bg: "bg-slate-50",
+    text: "text-slate-600",
+    border: "border-slate-200",
+    badge: "bg-slate-100 text-slate-700"
   };
 
-  if (behaviorStatus === "growing") {
+  if (behaviorStatus === "active") {
+    statusLabel = "🟢 ใช้งานต่อเนื่อง (Active)";
+    statusColor = {
+      bg: "bg-emerald-50",
+      text: "text-emerald-700",
+      border: "border-emerald-200",
+      badge: "bg-emerald-100 text-emerald-800"
+    };
+  } else if (behaviorStatus === "growing") {
     statusLabel = "🚀 เติบโตต่อเนื่อง (Growing)";
     statusColor = {
       bg: "bg-blue-50",
@@ -283,10 +260,18 @@ export function analyzeCustomer(lead: Lead, months: string[]): AnalyzedCustomerU
       border: "border-rose-200",
       badge: "bg-rose-100 text-rose-800"
     };
+  } else if (behaviorStatus === "no_usage") {
+    statusLabel = "⚪ ยังไม่มีการใช้งาน";
+    statusColor = {
+      bg: "bg-slate-50",
+      text: "text-slate-600",
+      border: "border-slate-200",
+      badge: "bg-slate-100 text-slate-700"
+    };
   }
 
   const lostRevenueImpact = behaviorStatus === "lost" 
-    ? (previousMonthRevenue > 0 ? previousMonthRevenue : (avgMonthlyRevenue > 0 ? avgMonthlyRevenue : (Number(lead.shipmentsPerDay) || 500) * estimatePricePerPiece(lead)))
+    ? (previousMonthRevenue > 0 ? previousMonthRevenue : (avgMonthlyRevenue > 0 ? avgMonthlyRevenue : 0))
     : (behaviorStatus === "churn_risk" || behaviorStatus === "dropping" 
         ? Math.max(0, previousMonthRevenue - currentMonthRevenue) 
         : 0);
@@ -338,7 +323,7 @@ export function exportCustomerBehaviorToExcel(
       "เบอร์โทรศัพท์": c.phone,
       "จังหวัด": c.province,
       "เซลส์ผู้ดูแล": c.salesPerson,
-      "สถานะพฤติกรรมลูกค้า": c.statusLabel.replace(/[🟢🚀🟡🟠🔴]/g, "").trim(),
+      "สถานะพฤติกรรมลูกค้า": c.statusLabel.replace(/[🟢🚀🟡🟠🔴⚪]/g, "").trim(),
       "สถานะ Pipeline": c.status,
       "สาเหตุที่หยุดส่ง (ถ้ามี)": c.lostReason || "-"
     };

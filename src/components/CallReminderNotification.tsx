@@ -1,10 +1,9 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Lead, TimelineItem } from "../types";
-import { getFollowUpStatus } from "../utils/crmHelpers";
 import { 
   PhoneCall, Clock, CheckCircle2, X, Bell, BellRing, 
-  ExternalLink, ChevronRight, PhoneForwarded, Calendar,
-  Volume2, VolumeX, AlertCircle
+  ExternalLink, ChevronRight, Volume2, VolumeX, AlertCircle,
+  Calendar, PhoneForwarded, Copy, Check
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -15,64 +14,162 @@ interface CallReminderNotificationProps {
   onUpdateLead: (lead: Lead) => Promise<void> | void;
 }
 
+// LocalStorage key to track dismissed/processed reminder keys
+const PROCESSED_REMINDERS_STORAGE_KEY = "crm_processed_reminder_keys";
+const SOUND_MUTED_STORAGE_KEY = "crm_reminder_sound_muted";
+
+// Helper to get processed reminder keys
+function getProcessedReminderKeys(): Set<string> {
+  try {
+    const raw = localStorage.getItem(PROCESSED_REMINDERS_STORAGE_KEY);
+    if (!raw) return new Set();
+    const arr = JSON.parse(raw);
+    return new Set(Array.isArray(arr) ? arr : []);
+  } catch {
+    return new Set();
+  }
+}
+
+// Helper to mark a reminder key as processed
+function markReminderKeyProcessed(key: string) {
+  try {
+    const keys = getProcessedReminderKeys();
+    keys.add(key);
+    // Keep max 200 recent keys
+    const arr = Array.from(keys).slice(-200);
+    localStorage.setItem(PROCESSED_REMINDERS_STORAGE_KEY, JSON.stringify(arr));
+  } catch (err) {
+    console.error("Failed to save processed reminder key:", err);
+  }
+}
+
+// Synthesize a pleasant chime using Web Audio API
+function playChimeSound() {
+  try {
+    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) return;
+    
+    const ctx = new AudioContextClass();
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => {});
+    }
+
+    const now = ctx.currentTime;
+    
+    // Pleasant 3-note harmonic chime (G5 -> C6 -> E6)
+    const notes = [
+      { freq: 783.99, start: 0, duration: 0.18 },    // G5
+      { freq: 1046.50, start: 0.12, duration: 0.22 }, // C6
+      { freq: 1318.51, start: 0.24, duration: 0.45 }  // E6
+    ];
+
+    notes.forEach(({ freq, start, duration }) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, now + start);
+
+      gain.gain.setValueAtTime(0, now + start);
+      gain.gain.linearRampToValueAtTime(0.12, now + start + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + start + duration);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+
+      osc.start(now + start);
+      osc.stop(now + start + duration);
+    });
+
+    setTimeout(() => {
+      ctx.close().catch(() => {});
+    }, 1200);
+  } catch (err) {
+    // Browsers may block audio if no prior user gesture - ignore gracefully
+    console.debug("Audio reminder muted by browser policy:", err);
+  }
+}
+
 export default function CallReminderNotification({
   leads,
   currentUser,
   onSelectLead,
   onUpdateLead
 }: CallReminderNotificationProps) {
-  const [dismissedLeadIds, setDismissedLeadIds] = useState<Record<string, number>>({});
+  const [processedKeys, setProcessedKeys] = useState<Set<string>>(() => getProcessedReminderKeys());
   const [activeLeadIndex, setActiveLeadIndex] = useState(0);
-  const [isSnoozeOpen, setIsSnoozeOpen] = useState(false);
-  const [customSnoozeDate, setCustomSnoozeDate] = useState("");
-  const [customSnoozeTime, setCustomSnoozeTime] = useState("10:00");
-  const [notificationsAllowed, setNotificationsAllowed] = useState(
-    typeof window !== "undefined" && "Notification" in window 
-      ? Notification.permission === "granted" 
-      : false
-  );
-  const [isMuted, setIsMuted] = useState(false);
-
-  // Request browser notifications permission
-  const handleRequestNotificationPermission = async () => {
-    if (typeof window !== "undefined" && "Notification" in window) {
-      const perm = await Notification.requestPermission();
-      setNotificationsAllowed(perm === "granted");
+  const [isSnoozeMenuOpen, setIsSnoozeMenuOpen] = useState(false);
+  const [copiedPhone, setCopiedPhone] = useState(false);
+  const [isUpdating, setIsUpdating] = useState(false);
+  const [isMuted, setIsMuted] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem(SOUND_MUTED_STORAGE_KEY) === "true";
+    } catch {
+      return false;
     }
+  });
+
+  // Track the current time, re-evaluated every 10 seconds for real-time alerts
+  const [currentTick, setCurrentTick] = useState<Date>(new Date());
+  
+  // Track keys that have already played audio during this session to avoid repeated chimes
+  const playedSoundKeysRef = useRef<Set<string>>(new Set());
+
+  // Periodically update current tick (every 10 seconds)
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTick(new Date());
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const toggleMute = () => {
+    const nextMuted = !isMuted;
+    setIsMuted(nextMuted);
+    try {
+      localStorage.setItem(SOUND_MUTED_STORAGE_KEY, String(nextMuted));
+    } catch {}
   };
 
-  // Find leads requiring immediate call follow-up
-  const now = new Date();
-  const todayStr = now.toISOString().split("T")[0]; // YYYY-MM-DD
-  const currentHourMinute = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  // Find due leads based on current date & time
+  const todayStr = currentTick.toISOString().split("T")[0]; // YYYY-MM-DD
+  const currentHour = String(currentTick.getHours()).padStart(2, "0");
+  const currentMin = String(currentTick.getMinutes()).padStart(2, "0");
+  const currentHourMinute = `${currentHour}:${currentMin}`;
+
+  const isSpecialManager = currentUser?.trim().toLowerCase() === "phere" || currentUser?.trim().toLowerCase() === "jack";
 
   const dueLeads = leads.filter(lead => {
-    // Check if user is the assigned salesperson or manager
-    if (currentUser && currentUser !== "Phere" && lead.salesPerson && lead.salesPerson !== currentUser) {
+    // Check permission: sales role vs manager
+    if (!isSpecialManager && currentUser && lead.salesPerson && lead.salesPerson !== currentUser) {
       return false;
     }
 
+    // Must have followUp with date and not completed
     if (!lead.followUp || !lead.followUp.date || lead.followUp.isCompleted) {
       return false;
     }
 
-    // Check if snoozed / dismissed recently
-    const dismissedUntil = dismissedLeadIds[lead.id];
-    if (dismissedUntil && Date.now() < dismissedUntil) {
+    const followUpDate = lead.followUp.date.trim();
+    const followUpTime = (lead.followUp.time || "10:00").trim();
+    const reminderKey = `${lead.id}_${followUpDate}_${followUpTime}`;
+
+    // Skip if already processed or dismissed
+    if (processedKeys.has(reminderKey)) {
       return false;
     }
 
-    const followUpDate = lead.followUp.date;
-    const followUpTime = lead.followUp.time || "09:00";
-
-    // Overdue or due today
+    // Check if time has arrived
+    // 1. Overdue from previous days
     if (followUpDate < todayStr) {
-      return true; // Overdue
+      return true;
     }
 
+    // 2. Due today and time has reached or passed
     if (followUpDate === todayStr) {
-      // Due today
-      return true;
+      if (followUpTime <= currentHourMinute) {
+        return true;
+      }
     }
 
     return false;
@@ -80,376 +177,380 @@ export default function CallReminderNotification({
 
   const activeLead = dueLeads[activeLeadIndex] || dueLeads[0];
 
-  // Send desktop notification when a new reminder surfaces
+  // Play audio chime once when a new due lead pop-up appears
   useEffect(() => {
-    if (activeLead && notificationsAllowed && !isMuted) {
-      try {
-        const title = `📞 ถึงเวลาโทรหา: ${activeLead.shopName}`;
-        const body = `เบอร์: ${activeLead.phone} | เรื่อง: ${activeLead.followUp?.topic || activeLead.followUp?.note || "ติดตามลูกค้า"}`;
-        new Notification(title, {
-          body,
-          icon: "/favicon.ico"
-        });
-      } catch (err) {
-        console.error("Browser notification failed", err);
-      }
+    if (!activeLead || isMuted) return;
+
+    const followUpDate = activeLead.followUp.date.trim();
+    const followUpTime = (activeLead.followUp.time || "10:00").trim();
+    const reminderKey = `${activeLead.id}_${followUpDate}_${followUpTime}`;
+
+    if (!playedSoundKeysRef.current.has(reminderKey)) {
+      playedSoundKeysRef.current.add(reminderKey);
+      playChimeSound();
     }
-  }, [activeLead?.id, notificationsAllowed, isMuted]);
+  }, [activeLead?.id, activeLead?.followUp?.date, activeLead?.followUp?.time, isMuted]);
+
+  // Adjust active index if count changes
+  useEffect(() => {
+    if (activeLeadIndex >= dueLeads.length && dueLeads.length > 0) {
+      setActiveLeadIndex(0);
+    }
+  }, [dueLeads.length, activeLeadIndex]);
 
   if (!activeLead) {
     return null;
   }
 
-  const followUpStatus = getFollowUpStatus(activeLead.followUp);
+  const activeReminderKey = `${activeLead.id}_${activeLead.followUp.date}_${activeLead.followUp.time || "10:00"}`;
 
+  // 1. DISMISS / CLOSE POP-UP
   const handleDismiss = () => {
-    // Dismiss for 30 minutes in local session
-    const dismissExpiry = Date.now() + 30 * 60 * 1000;
-    setDismissedLeadIds(prev => ({ ...prev, [activeLead.id]: dismissExpiry }));
-    setIsSnoozeOpen(false);
+    markReminderKeyProcessed(activeReminderKey);
+    setProcessedKeys(prev => new Set([...prev, activeReminderKey]));
+    setIsSnoozeMenuOpen(false);
   };
 
-  const handleSnooze = async (minutes: number, label: string) => {
-    const target = new Date(Date.now() + minutes * 60 * 1000);
-    const targetDate = target.toISOString().split("T")[0];
-    const targetTime = `${String(target.getHours()).padStart(2, "0")}:${String(target.getMinutes()).padStart(2, "0")}`;
+  // 2. SNOOZE (เลื่อนเตือน: 5 นาที, 10 นาที, 30 นาที, 1 ชั่วโมง)
+  const handleSnoozeMinutes = async (minutes: number, label: string) => {
+    if (isUpdating) return;
+    setIsUpdating(true);
 
-    const timelineItem: TimelineItem = {
-      id: `id_${Math.random().toString(36).substring(2, 9)}`,
-      title: `⏰ เลื่อนเวลาโทร (${label})`,
-      description: `เลื่อนการโทรติดตามไปเป็นวันที่ ${targetDate} เวลา ${targetTime} น.`,
-      date: new Date().toISOString(),
-      type: "followup",
-      author: currentUser || "ระบบ"
-    };
+    try {
+      const now = new Date();
+      const newTarget = new Date(now.getTime() + minutes * 60 * 1000);
+      const newDateStr = newTarget.toISOString().split("T")[0];
+      const newTimeStr = `${String(newTarget.getHours()).padStart(2, "0")}:${String(newTarget.getMinutes()).padStart(2, "0")}`;
 
-    const updatedLead: Lead = {
-      ...activeLead,
-      followUp: {
-        ...activeLead.followUp,
-        date: targetDate,
-        time: targetTime,
-        isCompleted: false
-      },
-      timeline: [...(activeLead.timeline || []), timelineItem]
-    };
+      const timelineItem: TimelineItem = {
+        id: `id_${Math.random().toString(36).substring(2, 10)}`,
+        title: `⏰ เลื่อนเวลาโทรติดตาม (${label})`,
+        description: `เลื่อนการโทรติดตามไปเป็นวันที่ ${newDateStr} เวลา ${newTimeStr} น.`,
+        date: new Date().toISOString(),
+        type: "followup",
+        author: currentUser || "ระบบ"
+      };
 
-    await onUpdateLead(updatedLead);
-    setIsSnoozeOpen(false);
-    // Dismiss temporarily
-    setDismissedLeadIds(prev => ({ ...prev, [activeLead.id]: Date.now() + minutes * 60 * 1000 }));
+      const updatedLead: Lead = {
+        ...activeLead,
+        followUp: {
+          ...activeLead.followUp,
+          date: newDateStr,
+          time: newTimeStr,
+          isCompleted: false,
+          updatedAt: new Date().toISOString(),
+          updatedBy: currentUser || "ระบบ"
+        },
+        timeline: [...(activeLead.timeline || []), timelineItem]
+      };
+
+      // Mark old key as processed so it won't alert immediately
+      markReminderKeyProcessed(activeReminderKey);
+      setProcessedKeys(prev => new Set([...prev, activeReminderKey]));
+
+      await onUpdateLead(updatedLead);
+      setIsSnoozeMenuOpen(false);
+    } catch (err) {
+      console.error("Failed to snooze follow-up:", err);
+    } finally {
+      setIsUpdating(false);
+    }
   };
 
-  const handleSnoozeTomorrow = async () => {
-    const tomorrow = new Date();
-    tomorrow.setDate(tomorrow.getDate() + 1);
-    const targetDate = tomorrow.toISOString().split("T")[0];
-    const targetTime = "09:30";
+  // 3. CALL NOW (โทรเลย)
+  const handleCallNow = async () => {
+    if (isUpdating) return;
+    setIsUpdating(true);
 
-    const timelineItem: TimelineItem = {
-      id: `id_${Math.random().toString(36).substring(2, 9)}`,
-      title: "⏰ เลื่อนเวลาโทรไปพรุ่งนี้เช้า",
-      description: `เลื่อนการโทรติดตามไปเป็นวันที่ ${targetDate} เวลา ${targetTime} น.`,
-      date: new Date().toISOString(),
-      type: "followup",
-      author: currentUser || "ระบบ"
-    };
+    try {
+      const phoneToCall = (activeLead.phone || "").replace(/[^0-9+]/g, "");
 
-    const updatedLead: Lead = {
-      ...activeLead,
-      followUp: {
-        ...activeLead.followUp,
-        date: targetDate,
-        time: targetTime,
-        isCompleted: false
-      },
-      timeline: [...(activeLead.timeline || []), timelineItem]
-    };
+      const timelineItem: TimelineItem = {
+        id: `id_${Math.random().toString(36).substring(2, 10)}`,
+        title: "📞 ดำเนินการโทรตามนัดหมายแจ้งเตือน",
+        description: `โทรออกหาลูกค้า (${activeLead.shopName || activeLead.contactName}) ตามนัดหมาย ${activeLead.followUp?.date} เวลา ${activeLead.followUp?.time || "10:00"} น.`,
+        date: new Date().toISOString(),
+        type: "call",
+        author: currentUser || "ระบบ"
+      };
 
-    await onUpdateLead(updatedLead);
-    setIsSnoozeOpen(false);
-    setDismissedLeadIds(prev => ({ ...prev, [activeLead.id]: Date.now() + 60 * 60 * 1000 }));
+      const newCallLog = {
+        id: `id_${Math.random().toString(36).substring(2, 10)}`,
+        date: new Date().toISOString().split("T")[0],
+        answered: true,
+        interestLevel: activeLead.score || 3,
+        notes: `โทรตามนัดหมายแจ้งเตือน: ${activeLead.followUp?.topic || activeLead.followUp?.note || "ติดตามลูกค้า"}`
+      };
+
+      const updatedLead: Lead = {
+        ...activeLead,
+        calls: [...(activeLead.calls || []), newCallLog],
+        timeline: [...(activeLead.timeline || []), timelineItem]
+      };
+
+      // Mark this reminder as processed
+      markReminderKeyProcessed(activeReminderKey);
+      setProcessedKeys(prev => new Set([...prev, activeReminderKey]));
+
+      // Trigger tel: call
+      if (phoneToCall) {
+        window.location.href = `tel:${phoneToCall}`;
+      }
+
+      await onUpdateLead(updatedLead);
+      setIsSnoozeMenuOpen(false);
+    } catch (err) {
+      console.error("Failed to execute call now:", err);
+    } finally {
+      setIsUpdating(false);
+    }
   };
 
-  const handleCustomSnooze = async () => {
-    if (!customSnoozeDate) return;
-    const timelineItem: TimelineItem = {
-      id: `id_${Math.random().toString(36).substring(2, 9)}`,
-      title: "⏰ เลื่อนเวลาโทร (ระบุเอง)",
-      description: `เลื่อนการโทรติดตามไปเป็นวันที่ ${customSnoozeDate} เวลา ${customSnoozeTime} น.`,
-      date: new Date().toISOString(),
-      type: "followup",
-      author: currentUser || "ระบบ"
-    };
-
-    const updatedLead: Lead = {
-      ...activeLead,
-      followUp: {
-        ...activeLead.followUp,
-        date: customSnoozeDate,
-        time: customSnoozeTime || "10:00",
-        isCompleted: false
-      },
-      timeline: [...(activeLead.timeline || []), timelineItem]
-    };
-
-    await onUpdateLead(updatedLead);
-    setIsSnoozeOpen(false);
-    setDismissedLeadIds(prev => ({ ...prev, [activeLead.id]: Date.now() + 10 * 60 * 1000 }));
+  const handleCopyPhone = () => {
+    if (!activeLead.phone) return;
+    navigator.clipboard.writeText(activeLead.phone);
+    setCopiedPhone(true);
+    setTimeout(() => setCopiedPhone(false), 2000);
   };
 
-  const handleMarkCompleted = async () => {
-    const timelineItem: TimelineItem = {
-      id: `id_${Math.random().toString(36).substring(2, 9)}`,
-      title: "✓ โทรติดตามเรียบร้อยแล้ว",
-      description: `เสร็จสิ้นการโทรติดตามตามนัดหมาย (${activeLead.followUp?.date} ${activeLead.followUp?.time || ""})`,
-      date: new Date().toISOString(),
-      type: "followup",
-      author: currentUser || "ระบบ"
-    };
-
-    const updatedLead: Lead = {
-      ...activeLead,
-      followUp: {
-        ...activeLead.followUp,
-        isCompleted: true
-      },
-      timeline: [...(activeLead.timeline || []), timelineItem]
-    };
-
-    await onUpdateLead(updatedLead);
-    setIsSnoozeOpen(false);
-  };
+  const appointmentTopic = activeLead.followUp?.topic 
+    ? activeLead.followUp.topic 
+    : (activeLead.followUp?.note || activeLead.followUp?.detail || "โทรติดตามความคืบหน้า");
 
   return (
-    <div className="fixed bottom-5 right-5 z-50 max-w-md w-full sm:w-96">
+    <div id="call-followup-reminder-popup" className="fixed bottom-5 right-5 z-50 max-w-md w-[calc(100vw-2.5rem)] sm:w-[400px]">
       <motion.div
-        initial={{ opacity: 0, y: 20, scale: 0.95 }}
+        initial={{ opacity: 0, y: 25, scale: 0.95 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 20, scale: 0.95 }}
-        className="bg-white rounded-2xl shadow-2xl border-2 border-amber-300 ring-4 ring-amber-400/20 overflow-hidden"
+        exit={{ opacity: 0, y: 25, scale: 0.95 }}
+        transition={{ type: "spring", stiffness: 350, damping: 25 }}
+        className="bg-white rounded-2xl shadow-2xl border border-amber-300 ring-4 ring-amber-400/20 overflow-hidden font-sans"
       >
-        {/* Top Header Strip */}
-        <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 px-4 py-2.5 text-white flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <div className="p-1.5 bg-white/20 rounded-lg animate-bounce">
-              <PhoneCall className="w-4 h-4 text-white" />
+        {/* Top Gradient Header */}
+        <div className="bg-gradient-to-r from-amber-500 via-orange-500 to-amber-600 px-4 py-3 text-white flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-white/20 rounded-xl animate-pulse">
+              <BellRing className="w-5 h-5 text-white" />
             </div>
             <div>
-              <span className="font-bold text-xs uppercase tracking-wider block">
-                🔔 แจ้งเตือนโทรหาลูกค้า (Call Reminder)
-              </span>
-              <span className="text-[10px] text-amber-100 block">
-                {dueLeads.length > 1 ? `รายการที่ ${activeLeadIndex + 1} จากทั้งหมด ${dueLeads.length} ราย` : "ถึงเวลาติดตามดีลนี้"}
+              <h3 className="font-extrabold text-sm tracking-wide flex items-center gap-1.5">
+                <span>🔔 ถึงเวลาติดต่อลูกค้า</span>
+              </h3>
+              <span className="text-[11px] text-amber-100 font-medium block">
+                {dueLeads.length > 1 ? `นัดหมายที่ ${activeLeadIndex + 1} จากทั้งหมด ${dueLeads.length} ราย` : "นัดหมายโทรติดตามในระบบ"}
               </span>
             </div>
           </div>
 
+          {/* Right Header Controls */}
           <div className="flex items-center gap-1">
             {dueLeads.length > 1 && (
               <button
                 type="button"
+                id="reminder-next-lead-btn"
                 onClick={() => setActiveLeadIndex((prev) => (prev + 1) % dueLeads.length)}
-                className="text-[10px] bg-white/20 hover:bg-white/30 px-2 py-0.5 rounded font-bold transition-colors cursor-pointer mr-1"
-                title="ดูรายถัดไป"
+                className="text-[10px] bg-white/20 hover:bg-white/30 text-white font-bold px-2 py-1 rounded-lg transition-colors cursor-pointer mr-1"
+                title="ดูนัดหมายถัดไป"
               >
                 ถัดไป ({activeLeadIndex + 1}/{dueLeads.length})
               </button>
             )}
+
+            {/* Mute/Unmute audio button */}
             <button
               type="button"
-              onClick={() => setIsMuted(!isMuted)}
-              className="p-1 text-white/80 hover:text-white rounded hover:bg-white/10 transition-colors"
-              title={isMuted ? "เปิดเสียง" : "ปิดเสียง"}
+              id="reminder-toggle-sound-btn"
+              onClick={toggleMute}
+              className="p-1.5 text-white/90 hover:text-white rounded-lg hover:bg-white/20 transition-colors cursor-pointer"
+              title={isMuted ? "เปิดเสียงเตือน" : "ปิดเสียงเตือน"}
             >
-              {isMuted ? <VolumeX className="w-3.5 h-3.5" /> : <Volume2 className="w-3.5 h-3.5" />}
+              {isMuted ? <VolumeX className="w-4 h-4 text-amber-200" /> : <Volume2 className="w-4 h-4" />}
             </button>
+
+            {/* Close button */}
             <button
               type="button"
+              id="reminder-close-popup-btn"
               onClick={handleDismiss}
-              className="p-1 text-white/80 hover:text-white rounded hover:bg-white/10 transition-colors cursor-pointer"
-              title="ซ่อนชั่วคราว"
+              className="p-1.5 text-white/90 hover:text-white rounded-lg hover:bg-white/20 transition-colors cursor-pointer"
+              title="ปิดการแจ้งเตือน"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
         </div>
 
-        {/* Lead Content Box */}
-        <div className="p-4 space-y-3">
-          {/* Shop Name & Status */}
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <h4 className="font-bold text-slate-900 text-sm truncate flex items-center gap-1.5">
-                <span>{activeLead.shopName || "ไม่ระบุชื่อร้าน"}</span>
-                {activeLead.customerType === "corporate" && (
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-indigo-50 text-indigo-700 border border-indigo-200">
-                    🏢 นิติบุคคล
-                  </span>
+        {/* Content Body */}
+        <div className="p-4 space-y-3.5 bg-slate-50/50">
+          {/* Main Appointment Details Card */}
+          <div className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-2 text-xs">
+            {/* Customer Name */}
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex-1 min-w-0">
+                <span className="text-[11px] font-bold text-slate-400 block">ลูกค้า:</span>
+                <p className="font-bold text-slate-900 text-sm truncate">
+                  {activeLead.shopName || activeLead.contactName || "ไม่ระบุชื่อลูกค้า"}
+                </p>
+                {activeLead.contactName && activeLead.shopName && (
+                  <p className="text-[11px] text-slate-500 truncate">ผู้ติดต่อ: {activeLead.contactName}</p>
                 )}
-              </h4>
-              <p className="text-xs text-slate-500 truncate mt-0.5">
-                ผู้ติดต่อ: <span className="font-semibold text-slate-700">{activeLead.contactName || "ไม่ระบุ"}</span>
-              </p>
-            </div>
-
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border shrink-0 ${followUpStatus.badgeClass}`}>
-              {followUpStatus.label}
-            </span>
-          </div>
-
-          {/* Follow-up Note / Details */}
-          {(activeLead.followUp?.topic || activeLead.followUp?.note || activeLead.followUp?.detail) && (
-            <div className="bg-amber-50/80 border border-amber-200/80 rounded-xl p-2.5 text-xs text-amber-900">
-              <span className="text-[10px] font-bold text-amber-800 block uppercase">หัวข้อ / เรื่องที่ต้องติดตาม:</span>
-              <p className="font-medium mt-0.5 leading-snug">
-                {activeLead.followUp.topic ? <strong>{activeLead.followUp.topic}: </strong> : null}
-                {activeLead.followUp.note || activeLead.followUp.detail || "ติดตามความคืบหน้าการสมัคร"}
-              </p>
-            </div>
-          )}
-
-          {/* Phone Call Quick Strip */}
-          <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-xl p-2.5">
-            <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold">
-                <PhoneCall className="w-4 h-4" />
               </div>
-              <div>
-                <span className="text-[10px] text-slate-400 block font-semibold">เบอร์โทรศัพท์</span>
-                <span className="font-mono font-bold text-slate-800 text-sm">{activeLead.phone || "ไม่มีเบอร์"}</span>
-              </div>
-            </div>
 
-            <div className="flex items-center gap-1.5">
-              {activeLead.phone && (
-                <a
-                  href={`tel:${activeLead.phone}`}
-                  className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-lg transition-colors flex items-center gap-1 shadow-xs"
-                >
-                  <PhoneCall className="w-3.5 h-3.5" />
-                  <span>โทรออก</span>
-                </a>
-              )}
               <button
                 type="button"
+                id="reminder-view-lead-details-btn"
                 onClick={() => onSelectLead(activeLead)}
-                className="px-2.5 py-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 font-bold text-xs rounded-lg border border-blue-200 transition-colors flex items-center gap-1"
-                title="เปิดดูรายละเอียด Lead"
+                className="px-2 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-[10px] rounded-lg transition-colors flex items-center gap-1 cursor-pointer shrink-0"
+                title="ดูข้อมูลลูกค้าฉบับเต็ม"
               >
-                <span>เปิดดู</span>
-                <ExternalLink className="w-3 h-3" />
+                <span>ดูข้อมูล</span>
+                <ExternalLink className="w-3 h-3 text-slate-500" />
               </button>
+            </div>
+
+            {/* Phone Number */}
+            <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+              <span className="text-[11px] font-bold text-slate-400">เบอร์:</span>
+              <div className="flex items-center gap-1.5">
+                <span className="font-mono font-bold text-slate-800 text-sm">
+                  {activeLead.phone || "-"}
+                </span>
+                {activeLead.phone && (
+                  <button
+                    type="button"
+                    onClick={handleCopyPhone}
+                    className="p-1 hover:bg-slate-100 rounded text-slate-400 hover:text-slate-700 transition-colors"
+                    title="คัดลอกเบอร์โทร"
+                  >
+                    {copiedPhone ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Appointment Topic */}
+            <div className="pt-1 border-t border-slate-100">
+              <span className="text-[11px] font-bold text-slate-400 block">นัดหมาย:</span>
+              <p className="font-medium text-slate-800 mt-0.5 leading-snug">
+                {appointmentTopic}
+              </p>
+            </div>
+
+            {/* Appointment Time */}
+            <div className="flex items-center justify-between pt-1 border-t border-slate-100">
+              <span className="text-[11px] font-bold text-slate-400">เวลา:</span>
+              <div className="flex items-center gap-1.5 font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
+                <Clock className="w-3 h-3 text-amber-600" />
+                <span>
+                  {activeLead.followUp.date === todayStr ? "วันนี้ " : `${activeLead.followUp.date} `}
+                  {activeLead.followUp.time || "10:00"} น.
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Action Buttons Row */}
-          <div className="grid grid-cols-2 gap-2 pt-1">
-            <button
-              type="button"
-              onClick={() => setIsSnoozeOpen(!isSnoozeOpen)}
-              className="py-2 px-3 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-colors flex items-center justify-center gap-1.5 border border-slate-200 cursor-pointer"
-            >
-              <Clock className="w-3.5 h-3.5 text-amber-600" />
-              <span>{isSnoozeOpen ? "ปิดเมนูเลื่อน" : "เลื่อนเวลา (Snooze)"}</span>
-            </button>
+          {/* Action Buttons Row: 📞 โทรเลย | ⏰ เลื่อนเตือน | ✕ ปิด */}
+          <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-2">
+              {/* Button: โทรเลย */}
+              <button
+                type="button"
+                id="reminder-call-now-btn"
+                disabled={isUpdating || !activeLead.phone}
+                onClick={handleCallNow}
+                className="py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <PhoneCall className="w-4 h-4" />
+                <span>📞 โทรเลย</span>
+              </button>
 
+              {/* Button: เลื่อนเตือน */}
+              <button
+                type="button"
+                id="reminder-snooze-toggle-btn"
+                disabled={isUpdating}
+                onClick={() => setIsSnoozeMenuOpen(!isSnoozeMenuOpen)}
+                className={`py-2.5 px-3 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 border cursor-pointer ${
+                  isSnoozeMenuOpen 
+                    ? "bg-amber-100 text-amber-900 border-amber-300" 
+                    : "bg-white hover:bg-slate-100 text-slate-700 border-slate-200 shadow-2xs"
+                }`}
+              >
+                <Clock className="w-4 h-4 text-amber-600" />
+                <span>{isSnoozeMenuOpen ? "ซ่อนตัวเลือก" : "เลื่อนเตือน"}</span>
+              </button>
+            </div>
+
+            {/* Button: ปิด */}
             <button
               type="button"
-              onClick={handleMarkCompleted}
-              className="py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-xs flex items-center justify-center gap-1.5 cursor-pointer"
+              id="reminder-dismiss-bottom-btn"
+              disabled={isUpdating}
+              onClick={handleDismiss}
+              className="w-full py-1.5 text-center text-slate-400 hover:text-slate-600 font-semibold text-xs transition-colors cursor-pointer hover:underline"
             >
-              <CheckCircle2 className="w-4 h-4" />
-              <span>โทรเสร็จแล้ว</span>
+              ปิด (รับทราบแล้ว)
             </button>
           </div>
 
-          {/* Snooze Options Drawer */}
+          {/* Snooze Options Selection Popover/Menu */}
           <AnimatePresence>
-            {isSnoozeOpen && (
+            {isSnoozeMenuOpen && (
               <motion.div
                 initial={{ opacity: 0, height: 0 }}
                 animate={{ opacity: 1, height: "auto" }}
                 exit={{ opacity: 0, height: 0 }}
-                className="pt-2 border-t border-slate-100 space-y-2 text-xs"
+                transition={{ duration: 0.18 }}
+                className="pt-2 border-t border-slate-200 space-y-2"
               >
-                <span className="text-[10px] font-bold text-slate-400 block uppercase">เลือกเวลาเลื่อนการโทร:</span>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-1.5">
-                  <button
-                    type="button"
-                    onClick={() => handleSnooze(15, "+15 นาที")}
-                    className="p-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded font-semibold text-[11px] text-center cursor-pointer"
-                  >
-                    +15 นาที
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSnooze(30, "+30 นาที")}
-                    className="p-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded font-semibold text-[11px] text-center cursor-pointer"
-                  >
-                    +30 นาที
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSnooze(60, "+1 ชั่วโมง")}
-                    className="p-1.5 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded font-semibold text-[11px] text-center cursor-pointer"
-                  >
-                    +1 ชม.
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleSnoozeTomorrow}
-                    className="p-1.5 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 text-indigo-900 rounded font-semibold text-[11px] text-center cursor-pointer"
-                  >
-                    พรุ่งนี้ 09:30
-                  </button>
+                <div className="flex items-center justify-between">
+                  <span className="text-[11px] font-bold text-slate-500">เลือกเวลาที่ต้องการเลื่อนเตือน:</span>
                 </div>
 
-                {/* Custom Snooze Date/Time input */}
-                <div className="bg-slate-50 p-2 rounded-lg border border-slate-200 space-y-1.5 mt-1">
-                  <span className="text-[10px] font-bold text-slate-500 block">ระบุวันและเวลาเอง:</span>
-                  <div className="flex gap-1.5">
-                    <input
-                      type="date"
-                      value={customSnoozeDate}
-                      onChange={(e) => setCustomSnoozeDate(e.target.value)}
-                      className="flex-1 bg-white border border-slate-300 rounded p-1 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    />
-                    <input
-                      type="time"
-                      value={customSnoozeTime}
-                      onChange={(e) => setCustomSnoozeTime(e.target.value)}
-                      className="w-20 bg-white border border-slate-300 rounded p-1 text-[11px] font-mono focus:outline-none focus:ring-1 focus:ring-amber-500"
-                    />
-                    <button
-                      type="button"
-                      disabled={!customSnoozeDate}
-                      onClick={handleCustomSnooze}
-                      className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 disabled:opacity-50 text-white font-bold rounded text-[11px] cursor-pointer"
-                    >
-                      ตกลง
-                    </button>
-                  </div>
+                <div className="grid grid-cols-4 gap-1.5">
+                  <button
+                    type="button"
+                    id="snooze-5m-btn"
+                    disabled={isUpdating}
+                    onClick={() => handleSnoozeMinutes(5, "5 นาที")}
+                    className="py-2 px-1 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded-xl font-bold text-xs text-center transition-colors cursor-pointer"
+                  >
+                    5 นาที
+                  </button>
+
+                  <button
+                    type="button"
+                    id="snooze-10m-btn"
+                    disabled={isUpdating}
+                    onClick={() => handleSnoozeMinutes(10, "10 นาที")}
+                    className="py-2 px-1 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded-xl font-bold text-xs text-center transition-colors cursor-pointer"
+                  >
+                    10 นาที
+                  </button>
+
+                  <button
+                    type="button"
+                    id="snooze-30m-btn"
+                    disabled={isUpdating}
+                    onClick={() => handleSnoozeMinutes(30, "30 นาที")}
+                    className="py-2 px-1 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded-xl font-bold text-xs text-center transition-colors cursor-pointer"
+                  >
+                    30 นาที
+                  </button>
+
+                  <button
+                    type="button"
+                    id="snooze-1h-btn"
+                    disabled={isUpdating}
+                    onClick={() => handleSnoozeMinutes(60, "1 ชั่วโมง")}
+                    className="py-2 px-1 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-900 rounded-xl font-bold text-xs text-center transition-colors cursor-pointer"
+                  >
+                    1 ชั่วโมง
+                  </button>
                 </div>
               </motion.div>
             )}
           </AnimatePresence>
-
-          {/* Browser Notification Permission Prompt */}
-          {!notificationsAllowed && typeof window !== "undefined" && "Notification" in window && (
-            <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-[11px] text-slate-500">
-              <span className="flex items-center gap-1">
-                <Bell className="w-3 h-3 text-amber-500" /> รับแจ้งเตือนบนเบราว์เซอร์
-              </span>
-              <button
-                type="button"
-                onClick={handleRequestNotificationPermission}
-                className="text-blue-600 hover:underline font-bold"
-              >
-                เปิดใช้งาน
-              </button>
-            </div>
-          )}
         </div>
       </motion.div>
     </div>

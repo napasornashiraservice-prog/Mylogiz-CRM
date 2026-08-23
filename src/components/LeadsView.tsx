@@ -18,6 +18,7 @@ import StatusReasonModal from "./StatusReasonModal";
 import TagFilterDropdown from "./TagFilterDropdown";
 import TagPill from "./TagPill";
 import LeadCardTags from "./LeadCardTags";
+import AffiliateSelectCombobox from "./AffiliateSelectCombobox";
 import { exportLeadsToExcel, getFollowUpStatus, getTagInfo, canManageTags } from "../utils/crmHelpers";
 
 interface LeadsViewProps {
@@ -1033,19 +1034,13 @@ export default function LeadsView({
                 {/* Affiliate */}
                 <div className="space-y-1">
                   <label className="block text-slate-600 font-bold">ผู้แนะนำ (Affiliate ID)</label>
-                  <select 
+                  <AffiliateSelectCombobox
                     id="new-lead-affiliate"
                     value={newAffiliateId}
-                    onChange={(e) => setNewAffiliateId(e.target.value)}
-                    className="w-full bg-slate-50 border border-slate-200 rounded-xl p-2.5 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white"
-                  >
-                    <option value="">-- ไม่ระบุ (ไม่มีผู้แนะนำ) --</option>
-                    {affiliates.map((a) => (
-                      <option key={a.id} value={a.affiliateId}>
-                        {a.affiliateId} - {a.name} {a.status === "inactive" ? "[ปิดใช้งาน]" : ""}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(val) => setNewAffiliateId(val)}
+                    affiliates={affiliates}
+                    placeholder="-- ไม่ระบุ (ไม่มีผู้แนะนำ) --"
+                  />
                 </div>
 
                 {/* Province */}

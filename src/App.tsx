@@ -12,6 +12,7 @@ import SettingsView from "./components/SettingsView";
 import LeadDetailsModal from "./components/LeadDetailsModal";
 import LoginView from "./components/LoginView";
 import UpdateNotification from "./components/UpdateNotification";
+import CallReminderNotification from "./components/CallReminderNotification";
 import { 
   LayoutDashboard, Users, PhoneCall, FileText, Settings, 
   UserCheck, BarChart3, MessageSquare, LogOut, Menu, 
@@ -85,6 +86,11 @@ export default function App() {
   });
 
   const handleSaveKpiTargets = async (updated: SalesKpiStore) => {
+    const isSpecialAdmin = currentUser?.trim().toLowerCase() === "phere" || currentUser?.trim().toLowerCase() === "jack";
+    if (!isSpecialAdmin) {
+      setErrorMsg("คุณไม่มีสิทธิ์ในการปรับเปลี่ยนเป้าหมาย KPI (เฉพาะ Phere และ Jack เท่านั้น)");
+      return false;
+    }
     setKpiTargets(updated);
     try {
       await setDoc(doc(db, "config", "sales_kpi"), { targets: cleanFirestorePayload(updated) });
@@ -362,7 +368,10 @@ export default function App() {
       setCurrentUser(null);
       localStorage.removeItem("crm_current_user");
     }
-  }, [salespersons, currentUser]);
+    if (activeTab === "settings" && !isSpecialAdmin) {
+      setActiveTab("dashboard");
+    }
+  }, [salespersons, currentUser, activeTab]);
 
   // Sync state helper to update selectedLead context if leads array updates
   useEffect(() => {
@@ -657,6 +666,11 @@ export default function App() {
 
   // 3.5. DELETE LEAD
   const handleDeleteLead = async (leadId: string): Promise<boolean> => {
+    const isSpecialAdmin = currentUser?.trim().toLowerCase() === "phere" || currentUser?.trim().toLowerCase() === "jack";
+    if (!isSpecialAdmin) {
+      setErrorMsg("คุณไม่มีสิทธิ์ในการลบข้อมูล Lead (เฉพาะ Phere และ Jack เท่านั้น)");
+      return false;
+    }
     setErrorMsg(null);
     try {
       await deleteDoc(doc(db, "leads", leadId));
@@ -1048,6 +1062,9 @@ export default function App() {
     return false;
   };
 
+  // Check if current user is allowed to access Settings
+  const canAccessSettings = currentUser?.toLowerCase() === "phere" || currentUser?.toLowerCase() === "jack";
+
   // Sidebar link options
   const SIDEBAR_LINKS = [
     { id: "dashboard", label: "ภาพรวม & รายงานยอดขาย", icon: LayoutDashboard },
@@ -1060,8 +1077,19 @@ export default function App() {
     { id: "settings", label: "ตั้งค่าระบบ & Sheets", icon: Settings },
   ];
 
+  const visibleSidebarLinks = SIDEBAR_LINKS.filter(link => {
+    if (link.id === "settings") {
+      return canAccessSettings;
+    }
+    return true;
+  });
+
   const handleNavigate = (tab: string) => {
-    setActiveTab(tab);
+    if (tab === "settings" && !canAccessSettings) {
+      setActiveTab("dashboard");
+    } else {
+      setActiveTab(tab);
+    }
     setSidebarOpen(false);
   };
 
@@ -1169,6 +1197,21 @@ export default function App() {
           />
         );
        case "settings":
+        if (!canAccessSettings) {
+          return (
+            <DashboardView 
+              leads={displayedLeads} 
+              salespersons={salespersons}
+              campaigns={campaigns}
+              currentUser={currentUser}
+              kpiTargets={kpiTargets}
+              onSaveKpiTargets={handleSaveKpiTargets}
+              onNavigate={handleNavigate} 
+              onSelectLead={setSelectedLead} 
+              onUpdateLead={handleUpdateLead}
+            />
+          );
+        }
         return (
           <SettingsView 
             leads={displayedLeads}
@@ -1229,7 +1272,7 @@ export default function App() {
 
           {/* Navigation Links list */}
           <nav className="space-y-1 text-xs" id="desktop-nav">
-            {SIDEBAR_LINKS.map(link => {
+            {visibleSidebarLinks.map(link => {
               const isActive = activeTab === link.id;
               return (
                 <button
@@ -1301,7 +1344,7 @@ export default function App() {
               </div>
 
               <nav className="space-y-1 text-xs">
-                {SIDEBAR_LINKS.map(link => {
+                {visibleSidebarLinks.map(link => {
                   const isActive = activeTab === link.id;
                   return (
                     <button
@@ -1531,7 +1574,15 @@ export default function App() {
         />
       )}
 
-      {/* 5. SYSTEM UPDATE NOTIFICATION POP-UP (Floating Bottom Alert) */}
+      {/* 5. CALL FOLLOW-UP REMINDER POP-UP (Floating Real-time Notification) */}
+      <CallReminderNotification
+        leads={leads}
+        currentUser={currentUser}
+        onSelectLead={setSelectedLead}
+        onUpdateLead={handleUpdateLead}
+      />
+
+      {/* 6. SYSTEM UPDATE NOTIFICATION POP-UP (Floating Bottom Alert) */}
       <UpdateNotification appName="Mylogiz Sales CRM" />
 
     </div>

@@ -75,6 +75,9 @@ export default function SalesKpiDashboard({
   const [selectedChartMetric, setSelectedChartMetric] = useState<"won" | "registered" | "pieces" | "revenue">("won");
   const [filterSalesperson, setFilterSalesperson] = useState<string>("all");
 
+  // Only Jack and Phere have permission to adjust KPI targets and add pieces
+  const isKpiAndPiecesAdmin = currentUser?.trim().toLowerCase() === "phere" || currentUser?.trim().toLowerCase() === "jack";
+
   // Determine active date range label and bounds
   const { dateRangeText, startDateBound, endDateBound } = useMemo(() => {
     if (filterMode === "daily") {
@@ -368,6 +371,7 @@ export default function SalesKpiDashboard({
     : salesPerformanceList.filter(s => s.salesperson === filterSalesperson);
 
   const handleOpenRecordPieces = (spName?: string) => {
+    if (!isKpiAndPiecesAdmin) return;
     setRecordPiecesSalesperson(spName || null);
     setIsRecordPiecesOpen(true);
   };
@@ -383,119 +387,238 @@ export default function SalesKpiDashboard({
   };
 
   return (
-    <div id="sales-kpi-dashboard-section" className="space-y-6">
+    <div id="sales-kpi-dashboard-section" className="space-y-3">
       
-      {/* 1. Main Header & Date Range Query Hub */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-xs space-y-4">
+      {/* 1. Main Header & Ultra-Compact Date Range Query Hub */}
+      <div className="bg-white p-3 sm:p-3.5 rounded-xl border border-slate-200 shadow-2xs space-y-2">
         
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-11 h-11 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-md shadow-blue-500/20">
-              <Target className="w-6 h-6" />
+        {/* Header Title Row */}
+        <div className="flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <div className="w-7 h-7 rounded-lg bg-gradient-to-tr from-blue-600 to-indigo-600 text-white flex items-center justify-center shadow-xs shrink-0">
+              <Target className="w-3.5 h-3.5" />
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-slate-800 tracking-tight">
-                  รายงานยอดขาย & เป้าหมาย KPI เซลล์รายบุคคล
-                </h2>
-                <span className="px-2 py-0.5 bg-blue-50 text-blue-700 border border-blue-200 rounded text-[10px] font-bold">
-                  KPI & Pieces Hub
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 mt-0.5">
-                เลือกช่วงเวลาดึงรายงานรายวัน รายเดือน หรือกำหนดวันเอง พร้อมระบบบันทึกจำนวนชิ้นพัสดุใช้งานจริง
-              </p>
+            <div className="min-w-0 flex items-center gap-2 flex-wrap">
+              <h2 className="text-sm font-bold text-slate-800 tracking-tight whitespace-nowrap">
+                รายงานยอดขาย & เป้าหมาย KPI เซลล์รายบุคคล
+              </h2>
+              <span className="px-1.5 py-0.2 bg-blue-50 text-blue-700 border border-blue-200 rounded text-[9px] font-bold shrink-0">
+                KPI & Pieces Hub
+              </span>
+              <span className="hidden xl:inline text-[11px] text-slate-400">
+                • เลือกช่วงเวลารายวัน รายเดือน หรือกำหนดเอง พร้อมบันทึกชิ้นพัสดุ
+              </span>
             </div>
           </div>
 
-          {/* Action Buttons: Set KPI */}
-          <div className="flex flex-wrap items-center gap-2 self-start lg:self-center">
-            
-            {/* Set KPI Target Button */}
-            <button
-              id="open-set-kpi-modal-btn"
-              type="button"
-              onClick={() => setIsKpiModalOpen(true)}
-              className="px-3.5 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl text-xs font-bold transition-all border border-slate-200 flex items-center gap-1.5 cursor-pointer"
-            >
-              <Settings className="w-3.5 h-3.5" />
-              <span>ตั้งเป้า KPI</span>
-            </button>
-
-          </div>
+          {/* Action Button: Set KPI (Only for Phere & Jack) */}
+          {isKpiAndPiecesAdmin && (
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                id="open-set-kpi-modal-btn"
+                type="button"
+                onClick={() => setIsKpiModalOpen(true)}
+                className="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-bold transition-all border border-slate-200 flex items-center gap-1.5 cursor-pointer shadow-2xs"
+              >
+                <Settings className="w-3 h-3 text-slate-500" />
+                <span>ตั้งเป้า KPI</span>
+              </button>
+            </div>
+          )}
         </div>
 
-        {/* Date Filter & Query Selector Controls */}
-        <div className="bg-slate-50/80 p-3.5 rounded-xl border border-slate-200 space-y-3">
+        {/* Compact Filters & Query Selector Controls */}
+        <div className="bg-slate-50 p-2 sm:p-2.5 rounded-lg border border-slate-200 space-y-1.5">
           
-          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex flex-wrap lg:flex-nowrap items-center justify-between gap-2">
             
-            {/* 4 Mode Tabs: Daily / Monthly / Custom / All */}
-            <div className="flex items-center bg-white p-1 rounded-xl border border-slate-200 shadow-2xs text-xs font-semibold">
-              <button
-                type="button"
-                id="filter-mode-daily-btn"
-                onClick={() => setFilterMode("daily")}
-                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                  filterMode === "daily" 
-                    ? "bg-blue-600 text-white shadow-xs font-bold" 
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Clock className="w-3.5 h-3.5" />
-                <span>รายวัน (Daily)</span>
-              </button>
+            {/* Left Controls: 4 Mode Tabs + Inline Sub-Pickers */}
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {/* 4 Mode Tabs: Daily / Monthly / Custom / All */}
+              <div className="flex items-center bg-white p-0.5 rounded-lg border border-slate-200 shadow-2xs text-xs font-semibold shrink-0">
+                <button
+                  type="button"
+                  id="filter-mode-daily-btn"
+                  onClick={() => setFilterMode("daily")}
+                  className={`px-2 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer text-xs ${
+                    filterMode === "daily" 
+                      ? "bg-blue-600 text-white shadow-2xs font-bold" 
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Clock className="w-3 h-3" />
+                  <span>รายวัน</span>
+                </button>
 
-              <button
-                type="button"
-                id="filter-mode-monthly-btn"
-                onClick={() => setFilterMode("monthly")}
-                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                  filterMode === "monthly" 
-                    ? "bg-blue-600 text-white shadow-xs font-bold" 
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Calendar className="w-3.5 h-3.5" />
-                <span>รายเดือน (Monthly)</span>
-              </button>
+                <button
+                  type="button"
+                  id="filter-mode-monthly-btn"
+                  onClick={() => setFilterMode("monthly")}
+                  className={`px-2 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer text-xs ${
+                    filterMode === "monthly" 
+                      ? "bg-blue-600 text-white shadow-2xs font-bold" 
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Calendar className="w-3 h-3" />
+                  <span>รายเดือน</span>
+                </button>
 
-              <button
-                type="button"
-                id="filter-mode-custom-btn"
-                onClick={() => setFilterMode("custom")}
-                className={`px-3 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-                  filterMode === "custom" 
-                    ? "bg-blue-600 text-white shadow-xs font-bold" 
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                <Filter className="w-3.5 h-3.5" />
-                <span>กำหนดวันเอง (Custom)</span>
-              </button>
+                <button
+                  type="button"
+                  id="filter-mode-custom-btn"
+                  onClick={() => setFilterMode("custom")}
+                  className={`px-2 py-1 rounded-md transition-all flex items-center gap-1 cursor-pointer text-xs ${
+                    filterMode === "custom" 
+                      ? "bg-blue-600 text-white shadow-2xs font-bold" 
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  <Filter className="w-3 h-3" />
+                  <span>กำหนดเอง</span>
+                </button>
 
-              <button
-                type="button"
-                id="filter-mode-all-btn"
-                onClick={() => setFilterMode("all")}
-                className={`px-3 py-1.5 rounded-lg transition-all cursor-pointer ${
-                  filterMode === "all" 
-                    ? "bg-blue-600 text-white shadow-xs font-bold" 
-                    : "text-slate-600 hover:text-slate-900"
-                }`}
-              >
-                สะสมทั้งหมด
-              </button>
+                <button
+                  type="button"
+                  id="filter-mode-all-btn"
+                  onClick={() => setFilterMode("all")}
+                  className={`px-2 py-1 rounded-md transition-all cursor-pointer text-xs ${
+                    filterMode === "all" 
+                      ? "bg-blue-600 text-white shadow-2xs font-bold" 
+                      : "text-slate-600 hover:text-slate-900"
+                  }`}
+                >
+                  สะสมทั้งหมด
+                </button>
+              </div>
+
+              {/* Mode-Specific Sub Pickers (Inline) */}
+              {filterMode === "daily" && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDay(todayStr)}
+                    className={`px-2 py-1 rounded-md border text-xs font-bold transition-all cursor-pointer ${
+                      selectedDay === todayStr 
+                        ? "bg-blue-100 text-blue-800 border-blue-300" 
+                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    วันนี้
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDay(yesterdayStr)}
+                    className={`px-2 py-1 rounded-md border text-xs font-bold transition-all cursor-pointer ${
+                      selectedDay === yesterdayStr 
+                        ? "bg-blue-100 text-blue-800 border-blue-300" 
+                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    เมื่อวาน
+                  </button>
+                  <div className="flex items-center bg-white border border-slate-200 rounded-md px-2 py-0.5 shadow-2xs">
+                    <input
+                      type="date"
+                      value={selectedDay}
+                      onChange={(e) => setSelectedDay(e.target.value)}
+                      className="text-xs font-semibold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {filterMode === "monthly" && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMonth(currentMonthStr)}
+                    className={`px-2 py-1 rounded-md border text-xs font-bold transition-all cursor-pointer ${
+                      selectedMonth === currentMonthStr 
+                        ? "bg-blue-100 text-blue-800 border-blue-300" 
+                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    เดือนนี้
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedMonth(lastMonthStr)}
+                    className={`px-2 py-1 rounded-md border text-xs font-bold transition-all cursor-pointer ${
+                      selectedMonth === lastMonthStr 
+                        ? "bg-blue-100 text-blue-800 border-blue-300" 
+                        : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
+                    }`}
+                  >
+                    เดือนที่แล้ว
+                  </button>
+                  <div className="flex items-center bg-white border border-slate-200 rounded-md px-2 py-0.5 shadow-2xs">
+                    <input
+                      type="month"
+                      value={selectedMonth}
+                      onChange={(e) => setSelectedMonth(e.target.value)}
+                      className="text-xs font-semibold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
+                    />
+                  </div>
+                </div>
+              )}
+
+              {filterMode === "custom" && (
+                <div className="flex items-center gap-1 flex-wrap">
+                  <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-md px-2 py-0.5 shadow-2xs">
+                    <span className="text-slate-400 font-bold text-[10px]">ตั้งแต่:</span>
+                    <input
+                      type="date"
+                      value={customStartDate}
+                      onChange={(e) => setCustomStartDate(e.target.value)}
+                      className="text-xs font-semibold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
+                    />
+                  </div>
+                  <span className="text-slate-400 text-xs font-bold">-</span>
+                  <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-md px-2 py-0.5 shadow-2xs">
+                    <span className="text-slate-400 font-bold text-[10px]">ถึง:</span>
+                    <input
+                      type="date"
+                      value={customEndDate}
+                      onChange={(e) => setCustomEndDate(e.target.value)}
+                      className="text-xs font-semibold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
+                    />
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      onClick={() => setQuickRange(7)}
+                      className="px-1.5 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-bold text-slate-600 cursor-pointer"
+                    >
+                      7 วัน
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQuickRange(14)}
+                      className="px-1.5 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-bold text-slate-600 cursor-pointer"
+                    >
+                      14 วัน
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setQuickRange(30)}
+                      className="px-1.5 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-bold text-slate-600 cursor-pointer"
+                    >
+                      30 วัน
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
-            {/* Salesperson Filter Dropdown */}
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-bold text-slate-500">กรองเซลส์:</span>
+            {/* Right Controls: Salesperson Filter Dropdown */}
+            <div className="flex items-center gap-1.5 shrink-0 ml-auto lg:ml-0">
+              <span className="text-xs font-bold text-slate-500 whitespace-nowrap">กรองเซลส์:</span>
               <select
                 id="filter-sp-kpi-select"
                 value={filterSalesperson}
                 onChange={(e) => setFilterSalesperson(e.target.value)}
-                className="bg-white border border-slate-200 rounded-xl px-3 py-1.5 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-2xs"
+                className="bg-white border border-slate-200 rounded-md px-2 py-1 text-xs font-semibold text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer shadow-2xs"
               >
                 <option value="all">👥 เซลล์ทุกคน (ภาพรวม)</option>
                 {allSalespersons.map(sp => (
@@ -506,145 +629,15 @@ export default function SalesKpiDashboard({
 
           </div>
 
-          {/* Sub-Controls based on Active Filter Mode */}
-          <div className="flex flex-wrap items-center gap-3 pt-1 border-t border-slate-200/60 text-xs">
-            
-            {/* Mode 1: Daily Specific Date Pickers */}
-            {filterMode === "daily" && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-bold text-slate-600">เลือกวันที่:</span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedDay(todayStr)}
-                  className={`px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
-                    selectedDay === todayStr 
-                      ? "bg-blue-100 text-blue-800 border-blue-300" 
-                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
-                  }`}
-                >
-                  วันนี้ ({todayStr})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedDay(yesterdayStr)}
-                  className={`px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
-                    selectedDay === yesterdayStr 
-                      ? "bg-blue-100 text-blue-800 border-blue-300" 
-                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
-                  }`}
-                >
-                  เมื่อวาน ({yesterdayStr})
-                </button>
-                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-0.5 shadow-2xs">
-                  <input
-                    type="date"
-                    value={selectedDay}
-                    onChange={(e) => setSelectedDay(e.target.value)}
-                    className="text-xs font-semibold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Mode 2: Monthly Specific Month Pickers */}
-            {filterMode === "monthly" && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-bold text-slate-600">เลือกเดือน:</span>
-                <button
-                  type="button"
-                  onClick={() => setSelectedMonth(currentMonthStr)}
-                  className={`px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
-                    selectedMonth === currentMonthStr 
-                      ? "bg-blue-100 text-blue-800 border-blue-300" 
-                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
-                  }`}
-                >
-                  เดือนนี้ ({currentMonthStr})
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setSelectedMonth(lastMonthStr)}
-                  className={`px-2.5 py-1 rounded-lg border text-xs font-bold transition-all cursor-pointer ${
-                    selectedMonth === lastMonthStr 
-                      ? "bg-blue-100 text-blue-800 border-blue-300" 
-                      : "bg-white text-slate-600 border-slate-200 hover:bg-slate-100"
-                  }`}
-                >
-                  เดือนที่แล้ว ({lastMonthStr})
-                </button>
-                <div className="flex items-center gap-1 bg-white border border-slate-200 rounded-lg px-2 py-0.5 shadow-2xs">
-                  <input
-                    type="month"
-                    value={selectedMonth}
-                    onChange={(e) => setSelectedMonth(e.target.value)}
-                    className="text-xs font-semibold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
-                  />
-                </div>
-              </div>
-            )}
-
-            {/* Mode 3: Custom Date Range Pickers & Quick Presets */}
-            {filterMode === "custom" && (
-              <div className="flex flex-wrap items-center gap-2 w-full">
-                <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1 shadow-2xs">
-                  <span className="text-slate-400 font-bold text-[11px]">ตั้งแต่:</span>
-                  <input
-                    type="date"
-                    value={customStartDate}
-                    onChange={(e) => setCustomStartDate(e.target.value)}
-                    className="text-xs font-semibold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
-                  />
-                </div>
-                <span className="text-slate-400 font-bold">ถึง</span>
-                <div className="flex items-center gap-1.5 bg-white border border-slate-200 rounded-lg px-2.5 py-1 shadow-2xs">
-                  <span className="text-slate-400 font-bold text-[11px]">ถึงวันที่:</span>
-                  <input
-                    type="date"
-                    value={customEndDate}
-                    onChange={(e) => setCustomEndDate(e.target.value)}
-                    className="text-xs font-semibold text-slate-800 bg-transparent focus:outline-none cursor-pointer"
-                  />
-                </div>
-
-                {/* Presets */}
-                <div className="flex items-center gap-1 ml-auto">
-                  <span className="text-[10px] text-slate-400 font-medium">ช่วงด่วน:</span>
-                  <button
-                    type="button"
-                    onClick={() => setQuickRange(7)}
-                    className="px-2 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-bold text-slate-600 cursor-pointer"
-                  >
-                    7 วัน
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setQuickRange(14)}
-                    className="px-2 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-bold text-slate-600 cursor-pointer"
-                  >
-                    14 วัน
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setQuickRange(30)}
-                    className="px-2 py-0.5 bg-white hover:bg-slate-100 border border-slate-200 rounded text-[10px] font-bold text-slate-600 cursor-pointer"
-                  >
-                    30 วัน
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* Active Range Summary Pill */}
-            <div className="w-full flex items-center justify-between pt-1 text-[11px] text-slate-500 font-medium">
-              <span className="flex items-center gap-1 text-blue-700 font-bold">
-                <Calendar className="w-3 h-3 text-blue-600" />
-                กำลังแสดงผล: {dateRangeText}
-              </span>
-              <span className="text-slate-400">
-                พบข้อมูลลูกค้าในช่วงนี้ทั้งหมด <strong>{periodFilteredLeads.length} ราย</strong> (รวม <strong>{teamTotals.totalPieces.toLocaleString()} ชิ้น</strong>)
-              </span>
-            </div>
-
+          {/* Active Range Summary Pill & Found Count Row */}
+          <div className="flex items-center justify-between pt-1.5 border-t border-slate-200/60 text-[11px] text-slate-500 font-medium flex-wrap gap-1">
+            <span className="flex items-center gap-1 text-blue-700 font-bold">
+              <Calendar className="w-3 h-3 text-blue-600 shrink-0" />
+              <span>กำลังแสดงผล: {dateRangeText}</span>
+            </span>
+            <span className="text-slate-500">
+              พบข้อมูลลูกค้าในช่วงนี้ <strong>{periodFilteredLeads.length} ราย</strong> (รวม <strong>{teamTotals.totalPieces.toLocaleString()} ชิ้น</strong>)
+            </span>
           </div>
 
         </div>
@@ -652,16 +645,16 @@ export default function SalesKpiDashboard({
       </div>
 
       {/* 2. Four Aggregate Team KPI Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         
         {/* Card 1: Won Deals (ปิดการขายกี่เจ้า) */}
-        <div id="kpi-stat-won" className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-2">
+        <div id="kpi-stat-won" className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 flex items-center gap-1.5">
+            <span className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
               <CheckCircle className="w-3.5 h-3.5 text-emerald-600" />
               ปิดการขายสำเร็จ (Won)
             </span>
-            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${teamTotals.wonPct >= 100 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${teamTotals.wonPct >= 100 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600'}`}>
               {teamTotals.wonPct}% KPI
             </span>
           </div>
@@ -676,17 +669,17 @@ export default function SalesKpiDashboard({
               style={{ width: `${Math.min(100, teamTotals.wonPct)}%` }} 
             />
           </div>
-          <span className="text-[10px] text-slate-400 block">ร้านค้าที่เปิดใช้งานและเริ่มส่งพัสดุจริง</span>
+          <span className="text-[10px] text-slate-400 block truncate">ร้านค้าที่เปิดใช้งานและเริ่มส่งพัสดุจริง</span>
         </div>
 
         {/* Card 2: Registered (สมัครกี่เจ้า) */}
-        <div id="kpi-stat-registered" className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-2">
+        <div id="kpi-stat-registered" className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 flex items-center gap-1.5">
+            <span className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
               <UserCheck className="w-3.5 h-3.5 text-blue-600" />
               สมัครสมาชิกใหม่ (Signups)
             </span>
-            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${teamTotals.regPct >= 100 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${teamTotals.regPct >= 100 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600'}`}>
               {teamTotals.regPct}% KPI
             </span>
           </div>
@@ -701,17 +694,17 @@ export default function SalesKpiDashboard({
               style={{ width: `${Math.min(100, teamTotals.regPct)}%` }} 
             />
           </div>
-          <span className="text-[10px] text-slate-400 block">ร้านค้าที่ยื่นสมัครผ่านแบบฟอร์ม</span>
+          <span className="text-[10px] text-slate-400 block truncate">ร้านค้าที่ยื่นสมัครผ่านแบบฟอร์ม</span>
         </div>
 
         {/* Card 3: Estimated Revenue (ยอดขายรวม) */}
-        <div id="kpi-stat-revenue" className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-2">
+        <div id="kpi-stat-revenue" className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 flex items-center gap-1.5">
+            <span className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
               <DollarSign className="w-3.5 h-3.5 text-indigo-600" />
               ยอดขายรวม (Total Revenue)
             </span>
-            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${teamTotals.revPct >= 100 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${teamTotals.revPct >= 100 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600'}`}>
               {teamTotals.revPct}% KPI
             </span>
           </div>
@@ -726,17 +719,17 @@ export default function SalesKpiDashboard({
               style={{ width: `${Math.min(100, teamTotals.revPct)}%` }} 
             />
           </div>
-          <span className="text-[10px] text-slate-400 block">มูลค่ายอดขายและบริการรวมของทีม</span>
+          <span className="text-[10px] text-slate-400 block truncate">มูลค่ายอดขายและบริการรวมของทีม</span>
         </div>
 
         {/* Card 4: Active Pieces (จำนวนชิ้น / ใช้งานแล้ว) */}
-        <div id="kpi-stat-pieces" className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-2">
+        <div id="kpi-stat-pieces" className="bg-white p-3.5 rounded-xl border border-slate-200 shadow-xs flex flex-col justify-between space-y-1.5">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold text-slate-500 flex items-center gap-1.5">
+            <span className="text-xs font-semibold text-slate-600 flex items-center gap-1.5">
               <Package className="w-3.5 h-3.5 text-amber-600" />
               จำนวนชิ้น (Active Pieces)
             </span>
-            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${teamTotals.piecesPct >= 100 ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+            <span className={`text-[10px] font-bold px-1.5 py-0.2 rounded ${teamTotals.piecesPct >= 100 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-slate-100 text-slate-600'}`}>
               {teamTotals.piecesPct}% KPI
             </span>
           </div>
@@ -752,21 +745,23 @@ export default function SalesKpiDashboard({
             />
           </div>
           <div className="flex items-center justify-between">
-            <span className="text-[10px] text-slate-400">ปริมาณพัสดุและชิ้นส่งจริง</span>
-            <button
-              type="button"
-              onClick={() => handleOpenRecordPieces()}
-              className="text-[10px] font-bold text-amber-700 hover:text-amber-800 hover:underline cursor-pointer flex items-center gap-0.5"
-            >
-              <Plus className="w-2.5 h-2.5" /> เพิ่มชิ้น
-            </button>
+            <span className="text-[10px] text-slate-400 truncate">ปริมาณพัสดุและชิ้นส่งจริง</span>
+            {isKpiAndPiecesAdmin && (
+              <button
+                type="button"
+                onClick={() => handleOpenRecordPieces()}
+                className="text-[10px] font-bold text-amber-700 hover:text-amber-800 hover:underline cursor-pointer flex items-center gap-0.5 shrink-0"
+              >
+                <Plus className="w-2.5 h-2.5" /> เพิ่มชิ้น
+              </button>
+            )}
           </div>
         </div>
 
       </div>
 
       {/* 3. Individual Salesperson Performance & KPI Achievement Cards */}
-      <div className="space-y-3">
+      <div className="space-y-2.5">
         <div className="flex items-center justify-between">
           <h3 className="text-sm font-bold text-slate-800 flex items-center gap-2">
             <Users className="w-4 h-4 text-blue-600" />
@@ -777,7 +772,7 @@ export default function SalesKpiDashboard({
           </span>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3.5">
           {displayedList.map((sp, idx) => {
             const badge = getBadgeInfo(sp.overallScore);
             const isTop = idx === 0 && sp.overallScore > 0;
@@ -918,28 +913,30 @@ export default function SalesKpiDashboard({
 
                 </div>
 
-                {/* Action Buttons: Add Pieces & Adjust KPI */}
-                <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
-                  <button
-                    type="button"
-                    onClick={() => handleOpenRecordPieces(sp.salesperson)}
-                    className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold flex items-center gap-1 transition-colors cursor-pointer"
-                  >
-                    <Plus className="w-3 h-3" />
-                    <span>เพิ่มจำนวนชิ้น</span>
-                  </button>
+                {/* Action Buttons: Add Pieces & Adjust KPI (Only for Phere & Jack) */}
+                {isKpiAndPiecesAdmin && (
+                  <div className="pt-2.5 border-t border-slate-100 flex items-center justify-between text-[11px]">
+                    <button
+                      type="button"
+                      onClick={() => handleOpenRecordPieces(sp.salesperson)}
+                      className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 rounded-lg font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <Plus className="w-3 h-3" />
+                      <span>เพิ่มจำนวนชิ้น</span>
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsKpiModalOpen(true);
-                    }}
-                    className="text-blue-600 hover:text-blue-800 font-bold flex items-center gap-0.5 hover:underline cursor-pointer"
-                  >
-                    <span>ปรับเป้า KPI</span>
-                    <ChevronRight className="w-3 h-3" />
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setIsKpiModalOpen(true);
+                      }}
+                      className="text-blue-600 hover:text-blue-800 font-bold flex items-center gap-0.5 hover:underline cursor-pointer"
+                    >
+                      <span>ปรับเป้า KPI</span>
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                )}
               </motion.div>
             );
           })}

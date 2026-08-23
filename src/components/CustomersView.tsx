@@ -1,10 +1,11 @@
 import React, { useState } from "react";
 import { Lead, LeadStatus, StatusLabels, StatusColors, Affiliate } from "../types";
 import { generateNextCustomerCode } from "../utils/codeGenerator";
+import { exportLeadsToExcel } from "../utils/crmHelpers";
 import { 
   Users, UserCheck, CheckCircle2, ShieldCheck, Search, HelpCircle, 
   MapPin, Clipboard, Calendar, Tag, CreditCard, ChevronRight, Play, Award,
-  Edit2, Check, X, Megaphone
+  Edit2, Check, X, Megaphone, Download
 } from "lucide-react";
 import { motion } from "motion/react";
 
@@ -117,61 +118,97 @@ export default function CustomersView({ leads, affiliates = [], onSelectLead, on
     onUpdateLead(updated);
   };
 
+  // Export customers to Excel
+  const handleExportCustomers = () => {
+    const dateStr = new Date().toISOString().split("T")[0];
+    const exportTitle = statusFilter === "all"
+      ? `Mylogiz_Customers_Directory_All_${dateStr}.xlsx`
+      : `Mylogiz_Customers_Directory_${statusFilter}_${dateStr}.xlsx`;
+    exportLeadsToExcel(filteredCustomers, exportTitle);
+  };
+
   return (
     <div className="space-y-6" id="customers-container">
       {/* Header */}
-      <div>
-        <h2 className="text-xl font-bold text-gray-800">ฐานข้อมูลลูกค้าที่สมัครสำเร็จ (Customers Directory)</h2>
-        <p className="text-xs text-gray-500 mt-0.5 font-sans">คลังข้อมูลแยกเฉพาะลูกค้าที่สมัครเสร็จสิ้น ตรวจเช็คประวัติการส่งพัสดุกล่องแรกและเรทราคาที่ใช้อย่างเป็นทางการ</p>
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div>
+          <h2 className="text-xl font-bold text-gray-800">ฐานข้อมูลลูกค้าที่สมัครสำเร็จ (Customers Directory)</h2>
+          <p className="text-xs text-gray-500 mt-0.5 font-sans">คลังข้อมูลแยกเฉพาะลูกค้าที่สมัครเสร็จสิ้น ตรวจเช็คประวัติการส่งพัสดุกล่องแรกและเรทราคาที่ใช้อย่างเป็นทางการ</p>
+        </div>
       </div>
 
       {/* Control widgets */}
       <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-xs space-y-3">
-        <div className="flex flex-col sm:flex-row justify-between gap-3">
+        <div className="flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
           
           {/* Quick status filters */}
-          <div className="bg-slate-100 p-0.5 rounded-lg flex border border-slate-200 text-xs">
+          <div className="bg-slate-100 p-0.5 rounded-lg flex border border-slate-200 text-xs overflow-x-auto">
             <button
               id="cust-tab-all"
               onClick={() => setStatusFilter("all")}
-              className={`px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer ${statusFilter === "all" ? "bg-white text-blue-700 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
+              className={`px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer whitespace-nowrap ${statusFilter === "all" ? "bg-white text-blue-700 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
             >
               ทั้งหมด ({customers.length})
             </button>
             <button
               id="cust-tab-registered"
               onClick={() => setStatusFilter(LeadStatus.REGISTERED)}
-              className={`px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer ${statusFilter === LeadStatus.REGISTERED ? "bg-white text-blue-700 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
+              className={`px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer whitespace-nowrap ${statusFilter === LeadStatus.REGISTERED ? "bg-white text-blue-700 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
             >
               สมัครสำเร็จ ({customers.filter(c => c.status === LeadStatus.REGISTERED).length})
             </button>
             <button
               id="cust-tab-activated"
               onClick={() => setStatusFilter(LeadStatus.ACTIVATED)}
-              className={`px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer ${statusFilter === LeadStatus.ACTIVATED ? "bg-white text-blue-700 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
+              className={`px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer whitespace-nowrap ${statusFilter === LeadStatus.ACTIVATED ? "bg-white text-blue-700 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
             >
               เปิดใช้งานพอร์ต ({customers.filter(c => c.status === LeadStatus.ACTIVATED).length})
             </button>
             <button
               id="cust-tab-regular"
               onClick={() => setStatusFilter(LeadStatus.REGULAR)}
-              className={`px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer ${statusFilter === LeadStatus.REGULAR ? "bg-white text-blue-700 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
+              className={`px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer whitespace-nowrap ${statusFilter === LeadStatus.REGULAR ? "bg-white text-blue-700 shadow-xs" : "text-slate-500 hover:text-slate-800"}`}
             >
               ส่งเป็นประจำ ({customers.filter(c => c.status === LeadStatus.REGULAR).length})
             </button>
           </div>
 
-          {/* Quick Search */}
-          <div className="relative w-full sm:w-64">
-            <input
-              id="cust-search-input"
-              type="text"
-              placeholder="ค้นหารหัสลูกค้า, ชื่อร้าน, จังหวัด..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-3 pr-8 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white text-slate-700"
-            />
-            <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5" />
+          <div className="flex flex-col sm:flex-row items-center gap-2.5">
+            {/* Quick Search */}
+            <div className="relative w-full sm:w-64">
+              <input
+                id="cust-search-input"
+                type="text"
+                placeholder="ค้นหารหัสลูกค้า, ชื่อร้าน, จังหวัด..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full bg-slate-50 border border-slate-200 rounded-lg pl-3 pr-8 py-1.5 text-xs focus:outline-none focus:ring-1 focus:ring-blue-500 focus:bg-white text-slate-700"
+              />
+              {searchQuery ? (
+                <button
+                  type="button"
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-2.5 top-2 p-0.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-200"
+                  title="ล้างคำค้นหา"
+                >
+                  <X className="w-3.5 h-3.5" />
+                </button>
+              ) : (
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute right-3 top-2.5" />
+              )}
+            </div>
+
+            {/* Export Excel Button */}
+            <button
+              id="cust-export-excel-btn"
+              type="button"
+              onClick={handleExportCustomers}
+              className="w-full sm:w-auto flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-700 active:scale-[0.98] text-white px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all shadow-xs cursor-pointer shrink-0"
+              title={`ส่งออกข้อมูลลูกค้า ${filteredCustomers.length} รายการเป็นไฟล์ Excel (.xlsx)`}
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>Export Excel ({filteredCustomers.length})</span>
+            </button>
           </div>
 
         </div>

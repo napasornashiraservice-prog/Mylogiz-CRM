@@ -313,7 +313,7 @@ export interface Lead {
   lostNote?: string;           // บันทึกรายละเอียดเพิ่มเติมการกู้คืนลูกค้า
 }
 
-export type CustomerBehaviorStatus = "growing" | "active" | "dropping" | "churn_risk" | "lost";
+export type CustomerBehaviorStatus = "growing" | "active" | "dropping" | "churn_risk" | "lost" | "no_usage";
 
 export interface MonthlyUsageRecord {
   month: string;              // รูปแบบ "YYYY-MM" เช่น "2026-08", "2026-07"

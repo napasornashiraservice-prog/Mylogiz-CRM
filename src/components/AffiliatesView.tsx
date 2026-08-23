@@ -4,13 +4,14 @@ import {
   canManageAffiliates, 
   generateNextAffiliateId, 
   isAffiliateIdUnique, 
-  getAffiliateStats 
+  getAffiliateStats,
+  exportAffiliatesToExcel
 } from "../utils/affiliateHelpers";
 import { 
   Users, Search, Plus, Edit2, Copy, Check, 
   Phone, MessageCircle, Calendar, ShieldCheck, 
   AlertCircle, X, Eye, CheckCircle2, ArrowUpRight, 
-  Share2, Megaphone
+  Share2, Megaphone, Download
 } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 
@@ -209,6 +210,15 @@ export default function AffiliatesView({
     l => l.status === LeadStatus.ACTIVATED || l.status === LeadStatus.REGULAR
   ).length;
 
+  // Export Affiliates & Members to Excel
+  const handleExportExcel = () => {
+    const dateStr = new Date().toISOString().split("T")[0];
+    const exportFilename = statusFilter === "all" && !searchQuery
+      ? `Mylogiz_Affiliate_Members_Tracking_${dateStr}.xlsx`
+      : `Mylogiz_Affiliate_Members_Filtered_${dateStr}.xlsx`;
+    exportAffiliatesToExcel(filteredAffiliates, leads, exportFilename);
+  };
+
   return (
     <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6" id="affiliates-view-container">
       
@@ -226,7 +236,18 @@ export default function AffiliatesView({
           </p>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <button
+            id="export-affiliate-excel-btn"
+            type="button"
+            onClick={handleExportExcel}
+            className="flex items-center gap-1.5 px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 active:scale-95 text-white font-medium rounded-xl text-xs shadow-xs transition-all cursor-pointer"
+            title={`ส่งออกข้อมูล Affiliate (${filteredAffiliates.length} รายการ) และรายชื่อสมาชิกที่แนะนำเป็นไฟล์ Excel`}
+          >
+            <Download className="w-4 h-4" />
+            <span>Export Excel</span>
+          </button>
+
           <button
             id="add-affiliate-btn"
             onClick={handleOpenAddModal}

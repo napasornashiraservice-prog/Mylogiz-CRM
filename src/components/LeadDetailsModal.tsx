@@ -30,6 +30,7 @@ import StatusReasonModal from "./StatusReasonModal";
 import CPLEXUsageCard from "./integrations/CPLEXUsageCard";
 import TagPill from "./TagPill";
 import TagPickerPopover from "./TagPickerPopover";
+import AffiliateSelectCombobox from "./AffiliateSelectCombobox";
 import { getFollowUpStatus, getTagInfo, canManageTags } from "../utils/crmHelpers";
 
 interface LeadDetailsModalProps {
@@ -75,6 +76,9 @@ export default function LeadDetailsModal({
   onAddCall, 
   onAddFile 
 }: LeadDetailsModalProps) {
+  // Only Jack and Phere have permission to delete leads
+  const canDeleteLead = Boolean(onDeleteLead) && (currentUser?.trim().toLowerCase() === "phere" || currentUser?.trim().toLowerCase() === "jack");
+
   const [activeTab, setActiveTab] = useState<"timeline" | "calls" | "notes" | "files" | "ai" | "cplex">("timeline");
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [isDeletingLead, setIsDeletingLead] = useState(false);
@@ -283,7 +287,7 @@ export default function LeadDetailsModal({
       `ชื่อร้านค้า/แบรนด์: ${lead.shopName || "-"}`,
       `ชื่อผู้ติดต่อ: ${lead.contactName || "-"}`,
       `เบอร์โทรศัพท์: ${lead.phone || "-"}`,
-      `LINE ID: ${lead.lineId ? `@${lead.lineId}` : "-"}`,
+      `LINE ID: ${lead.lineId || "-"}`,
       `Facebook Page: ${lead.facebook || "-"}`,
       `จังหวัด: ${lead.province || "-"}`,
       `ที่อยู่: ${lead.address || "-"}`,
@@ -991,19 +995,13 @@ export default function LeadDetailsModal({
                     </div>
                     <div>
                       <label className="text-gray-500 font-semibold block mb-0.5">ผู้แนะนำ (Affiliate ID)</label>
-                      <select 
+                      <AffiliateSelectCombobox
                         id="edit-affiliate"
-                        value={editAffiliateId} 
-                        onChange={(e) => setEditAffiliateId(e.target.value)} 
-                        className="w-full bg-slate-50 border p-2 rounded"
-                      >
-                        <option value="">-- ไม่ระบุ (ไม่มีผู้แนะนำ) --</option>
-                        {affiliates.map(a => (
-                          <option key={a.id} value={a.affiliateId}>
-                            {a.affiliateId} - {a.name} {a.status === "inactive" ? "[ปิดใช้งาน]" : ""}
-                          </option>
-                        ))}
-                      </select>
+                        value={editAffiliateId}
+                        onChange={(val) => setEditAffiliateId(val)}
+                        affiliates={affiliates}
+                        placeholder="-- ไม่ระบุ (ไม่มีผู้แนะนำ) --"
+                      />
                     </div>
                     <div>
                       <label className="text-gray-500 font-semibold block mb-0.5">ยอดส่งต่อเดือน (ชิ้น/เดือน)</label>
@@ -1137,7 +1135,7 @@ export default function LeadDetailsModal({
                     <div>
                       <span className="text-gray-400 block text-[10px]">LINE ID</span>
                       <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="font-semibold text-indigo-600">{lead.lineId ? `@${lead.lineId}` : "-"}</span>
+                        <span className="font-semibold text-indigo-600">{lead.lineId || "-"}</span>
                         {lead.lineId && (
                           <button
                             id="copy-lead-line-btn"
@@ -2371,8 +2369,8 @@ export default function LeadDetailsModal({
           <div className="flex items-center gap-3">
             <span>รหัสระบบของลูกค้า: <span className="font-mono font-bold text-slate-700">{lead.id}</span></span>
             
-            {/* Danger Zone: Discrete delete button to prevent accidental clicks */}
-            {onDeleteLead && (
+            {/* Danger Zone: Discrete delete button to prevent accidental clicks (Only for Phere & Jack) */}
+            {canDeleteLead && (
               <button
                 id="details-delete-lead-btn"
                 type="button"
@@ -2442,7 +2440,7 @@ export default function LeadDetailsModal({
                 type="button"
                 disabled={isDeletingLead}
                 onClick={async () => {
-                  if (!onDeleteLead) return;
+                  if (!onDeleteLead || !canDeleteLead) return;
                   setIsDeletingLead(true);
                   const res = await onDeleteLead(lead.id);
                   setIsDeletingLead(false);
